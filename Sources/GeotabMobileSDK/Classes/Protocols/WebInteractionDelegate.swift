@@ -17,7 +17,7 @@ public protocol WebInteractionDelegate: AnyObject {
      
      - Parameter navigationAction: The navigation action that will be taken.
      */
-    func decidePolicyFor(navigationAction: WKNavigationAction)
+    func onDecidePolicy(navigationAction: WKNavigationAction)
 
     /**
      Called when a script message is received from a WebView.
@@ -28,6 +28,6 @@ public protocol WebInteractionDelegate: AnyObject {
 }
 
 public extension WebInteractionDelegate {
-    func decidePolicyFor(navigationAction: WKNavigationAction) {}
+    func onDecidePolicy(navigationAction: WKNavigationAction) {}
     func didReceive(scriptMessage: WKScriptMessage) {}
 }
