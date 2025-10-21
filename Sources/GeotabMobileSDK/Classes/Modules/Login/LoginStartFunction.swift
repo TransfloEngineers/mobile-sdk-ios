@@ -1,6 +1,6 @@
 import Foundation
 
-struct LoginArgument: Codable {
+struct LoginStartArgument: Codable {
     let clientId: String
     let discoveryUri: String
     let loginHint: String
@@ -10,21 +10,22 @@ struct LoginArgument: Codable {
 class LoginStartFunction: ModuleFunction {
     
     private static let functionName = "start"
-    private let authUtil: any AuthUtilityConfigurator
+    private var authUtil: any AuthUtilityConfigurator
     private let bundle: any AppBundle
     private static let redirectSchemeKey = "geotab_login_redirect_scheme"
    
     init(module: LoginModule, util: any AuthUtilityConfigurator = AuthUtil(),
          bundle: any AppBundle = Bundle.main) {
         self.bundle = bundle
-        self.authUtil = util
+        authUtil = util
+        authUtil.returnAllTokensOnLogin = true
         super.init(module: module, name: LoginStartFunction.functionName)}
     
     override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, any Error>) -> Void) {
         
         guard let argument = validateAndDecodeJSONObject(argument: argument,
                                                          jsCallback: jsCallback,
-                                                         decodeType: LoginArgument.self) else { return }
+                                                         decodeType: LoginStartArgument.self) else { return }
         
         guard !argument.clientId.isEmpty, !argument.discoveryUri.isEmpty, !argument.loginHint.isEmpty else {
             jsCallback(Result.failure(GeotabDriveErrors.ModuleFunctionArgumentError))
@@ -44,7 +45,7 @@ class LoginStartFunction: ModuleFunction {
         authUtil.login(
             clientId: argument.clientId,
             discoveryUri: discoveryURL,
-            loginHint: argument.loginHint,
+            username: argument.loginHint,
             redirectUri: redirectUriURL,
             ephemeralSession: argument.ephemeralSession ?? false,
             loginCallback: jsCallback
