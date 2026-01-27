@@ -2,15 +2,18 @@ import UIKit
 import WebKit
 import SafariServices
 
-class PrintModule: Module {
-    let webDriveDelegate: WebDriveDelegate
-    let viewPresenter: ViewPresenter
+protocol PrintViewPresenter: ViewPresenter {
+    func presentPrintController(completion: @escaping () -> Void)
+}
 
-    init(webDriveDelegate: WebDriveDelegate, viewPresenter: ViewPresenter) {
-        self.webDriveDelegate = webDriveDelegate
+class PrintModule: Module {
+    static let moduleName = "print"
+
+    weak var viewPresenter: (any PrintViewPresenter)?
+
+    init(viewPresenter: any PrintViewPresenter) {
         self.viewPresenter = viewPresenter
-        super.init(name: "print")
+        super.init(name: PrintModule.moduleName)
         functions.append(PrintFunction(module: self))
     }
-    
 }

@@ -1,4 +1,4 @@
-import UIKit
+public import UIKit
 
 protocol AppearanceSource: AnyObject {
     var appearanceType: AppearanceType { get }
@@ -9,25 +9,25 @@ class AppearanceModule: Module {
     static let eventName = "geotab.appearance"
     static let appearanceProperty = "appearanceType"
 
-    private weak var webDriveDelegate: WebDriveDelegate?
-    private weak var appearanceSource: AppearanceSource?
+    private weak var scriptGateway: (any ScriptGateway)?
+    private weak var appearanceSource: (any AppearanceSource)?
 
-    init(webDriveDelegate: WebDriveDelegate, appearanceSource: AppearanceSource) {
-        self.webDriveDelegate = webDriveDelegate
+    init(scriptGateway: any ScriptGateway, appearanceSource: any AppearanceSource) {
+        self.scriptGateway = scriptGateway
         self.appearanceSource = appearanceSource
         super.init(name: AppearanceModule.moduleName)
     }
     
     func appearanceChanged() {
-        webDriveDelegate?.evaluate(script: updateAppearancePropertyScript()) { _ in }        
+        scriptGateway?.evaluate(script: updateAppearancePropertyScript()) { _ in }        
         let event = ModuleEvent(event: AppearanceModule.eventName,
                                 params: appearanceEventDetailJson())
-        webDriveDelegate?.push(moduleEvent: event) { _ in }
+        scriptGateway?.push(moduleEvent: event) { _ in }
     }
     
     func appearanceType() -> AppearanceType {
         guard let appearance = appearanceSource?.appearanceType else {
-            return .Unknown
+            return .unknown
         }
         return appearance
     }
@@ -53,25 +53,21 @@ class AppearanceModule: Module {
 
 // MARK: - DriveViewController extension implements AppearanceSource
 
+/// :nodoc:
 extension DriveViewController: AppearanceSource {
     
     var appearanceType: AppearanceType {
-        if #available(iOS 13.0, *) {
-            return traitCollection.userInterfaceStyle == .dark ? .Dark : .Light
-        }
-        return .Unknown
+        return traitCollection.userInterfaceStyle == .dark ? .dark : .light
     }
 
     open override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        if #available(iOS 13.0, *) {
-            // Only update if not backgrounded and the appearance changes. iOS may call this when
-            // the app is backgrounded to take screen shots for the task switch. Our UI won't update
-            // fast enough for that to work, so best to ignore in that case and avoid flicker
-            if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection)
-                && UIApplication.shared.applicationState != .background {
-                if let appearanceModule = findModule(module: AppearanceModule.moduleName) as? AppearanceModule {
-                    appearanceModule.appearanceChanged()
-                }
+        // Only update if not backgrounded and the appearance changes. iOS may call this when
+        // the app is backgrounded to take screen shots for the task switch. Our UI won't update
+        // fast enough for that to work, so best to ignore in that case and avoid flicker
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection)
+            && UIApplication.shared.applicationState != .background {
+            if let appearanceModule = findModule(module: AppearanceModule.moduleName) as? AppearanceModule {
+                appearanceModule.appearanceChanged()
             }
         }
     }

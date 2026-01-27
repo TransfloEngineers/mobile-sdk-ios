@@ -1,13 +1,34 @@
-import Foundation
+public import Foundation
+import os.log
 
+/// :nodoc:
 public protocol Logging {
     func log(level: Logger.Level, tag: String, message: String)
-    func event(level: Logger.Level, tag: String, message: String, error: Error?)
+    func log(level: Logger.Level, tag: String, message: String, error: (any Error)?)
+    func event(level: Logger.Level, tag: String, message: String, error: (any Error)?, tags: [String: String]?, context: [String: Any]?)
+    func event(level: Logger.Level, tag: String, message: String, error: (any Error)?)
+    func event(level: Logger.Level, tag: String, message: String)
 }
 
+/// :nodoc:
+extension Logging {
+    func log(level: Logger.Level, tag: String, message: String) {
+        log(level: level, tag: tag, message: message, error: nil)
+    }
+
+    public func event(level: Logger.Level, tag: String, message: String, error: (any Error)?) {
+        event(level: level, tag: tag, message: message, error: error, tags: nil, context: nil)
+    }
+
+    public func event(level: Logger.Level, tag: String, message: String) {
+        event(level: level, tag: tag, message: message, error: nil, tags: nil, context: nil)
+    }
+}
+
+/// :nodoc:
 public enum Logger {
     
-    public static internal(set) var shared: Logging = DefaultLogger()
+    public static internal(set) var shared: any Logging = DefaultLogger()
     
     public enum Level: String {
         case debug = "DEBUG"
@@ -17,13 +38,47 @@ public enum Logger {
     }
 }
 
-public extension Notification.Name {
-    static let log = Notification.Name("GeotabMobileSDKLog")
+/// :nodoc:
+extension Notification.Name {
+    public static let log = Notification.Name("GeotabMobileSDKLog")
 }
 
+/// :nodoc:
 class DefaultLogger: Logging {
-    
-    private func toNotificationCenter(level: Logger.Level, tag: String, message: String, error: Error?) {
+
+    private let osLogger = os.Logger(subsystem: "com.geotab.mobile.sdk", category: "GeotabMobileSDK")
+
+    private func formatTags(_ tags: [String: String]) -> String {
+        tags.map { "\($0.key)=\($0.value)" }.joined(separator: ", ")
+    }
+
+    private func formatContext(_ context: [String: Any]) -> String {
+        context.map { "\($0.key)=\($0.value)" }.joined(separator: ", ")
+    }
+
+    private func toOSLogger(level: Logger.Level, tag: String, message: String, error: (any Error)?, tags: [String: String]?, context: [String: Any]?) {
+        var logMessage = error != nil ? "\(message) \(error!.localizedDescription)" : message
+
+        if let tags = tags, !tags.isEmpty {
+            logMessage += " [tags: \(formatTags(tags))]"
+        }
+        if let context = context, !context.isEmpty {
+            logMessage += " [context: \(formatContext(context))]"
+        }
+
+        switch level {
+        case .debug:
+            osLogger.debug("[\(tag, privacy: .public)] \(logMessage, privacy: .public)")
+        case .info:
+            osLogger.info("[\(tag, privacy: .public)] \(logMessage, privacy: .public)")
+        case .warn:
+            osLogger.warning("[\(tag, privacy: .public)] \(logMessage, privacy: .public)")
+        case .error:
+            osLogger.error("[\(tag, privacy: .public)] \(logMessage, privacy: .public)")
+        }
+    }
+
+    private func toNotificationCenter(level: Logger.Level, tag: String, message: String, error: (any Error)?, tags: [String: String]?, context: [String: Any]?) {
         var userInfo: [String: Any] = [
             "level": level,
             "tag": tag,
@@ -32,55 +87,58 @@ class DefaultLogger: Logging {
         if let error {
             userInfo["error"] = error
         }
+        if let tags {
+            userInfo["tags"] = tags
+        }
+        if let context {
+            userInfo["context"] = context
+        }
         NotificationCenter.default.post(Notification(name: .log, object: nil, userInfo: userInfo))
     }
 
-    private func toConsole(level: Logger.Level, tag: String, message: String, error: Error?) {
-        if let error = error {
-            NSLog("[\(level.rawValue)] [\(tag)] \(message) \(error.localizedDescription)")
-        } else {
-            NSLog("[\(level.rawValue)] [\(tag)] \(message)")
-        }
+    func log(level: Logger.Level, tag: String, message: String, error: (any Error)?) {
+        toNotificationCenter(level: level, tag: tag, message: message, error: error, tags: nil, context: nil)
+        #if DEBUG
+        toOSLogger(level: level, tag: tag, message: message, error: error, tags: nil, context: nil)
+        #endif
     }
-    
-    func log(level: Logger.Level, tag: String, message: String) {
-        toConsole(level: level, tag: tag, message: message, error: nil)
-        toNotificationCenter(level: level, tag: tag, message: message, error: nil)
-    }
-    
-    func event(level: Logger.Level, tag: String, message: String, error: Error?) {
-        toConsole(level: level, tag: tag, message: message, error: error)
-        toNotificationCenter(level: level, tag: tag, message: message, error: error)
+
+    func event(level: Logger.Level, tag: String, message: String, error: (any Error)?, tags: [String: String]? = nil, context: [String: Any]? = nil) {
+        toNotificationCenter(level: level, tag: tag, message: message, error: error, tags: tags, context: context)
+        #if DEBUG
+        toOSLogger(level: level, tag: tag, message: message, error: error, tags: tags, context: context)
+        #endif
     }
 }
 
+/// :nodoc:
 @propertyWrapper
-struct TaggedLogger {
+public struct TaggedLogger {
     
     private let tag: String
     
-    init(_ tag: String) {
+    public init(_ tag: String) {
         self.tag = tag
     }
 
-    var wrappedValue: Logging { Logger.shared }
-    var projectedValue: TaggedLogger { self }
+    public var wrappedValue: any Logging { Logger.shared }
+    public var projectedValue: TaggedLogger { self }
     
-    func debug(_ message: String) {
+    public func debug(_ message: String) {
         #if DEBUG
         Logger.shared.log(level: .debug, tag: tag, message: message)
         #endif
     }
 
-    func info(_ message: String) {
+    public func info(_ message: String) {
         Logger.shared.log(level: .info, tag: tag, message: message)
     }
 
-    func warn(_ message: String, error: Error? = nil) {
-        Logger.shared.event(level: .warn, tag: tag, message: message, error: error)
+    public func warn(_ message: String, error: (any Error)? = nil) {
+        Logger.shared.log(level: .warn, tag: tag, message: message, error: error)
     }
 
-    func error(_ message: String, error: Error? = nil) {
-        Logger.shared.event(level: .error, tag: tag, message: message, error: error)
+    public func error(_ message: String, error: (any Error)? = nil) {
+        Logger.shared.log(level: .error, tag: tag, message: message, error: error)
     }
 }

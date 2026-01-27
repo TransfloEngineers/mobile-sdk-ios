@@ -1,13 +1,26 @@
 class SpeechModule: Module {
-    var speechEngine: SpeechEngine!
+    static let moduleName = "speech"
+    fileprivate var speechEngine: any SpeechEngine
     
     init() {
-        self.speechEngine = RealSpeechEngine()
-        super.init(name: "speech")
-        functions.append(NativeSpeakFunction(module: self))
+        speechEngine = RealSpeechEngine()
+        super.init(name: SpeechModule.moduleName)
+        functions.append(NativeSpeakFunction(module: self, speechEngine: SpeechEngineAdapter(module: self)))
     }
     
-    func setSpeechEngine(speechEngine: SpeechEngine) {
+    func setSpeechEngine(speechEngine: any SpeechEngine) {
         self.speechEngine = speechEngine
+    }
+}
+
+class SpeechEngineAdapter: SpeechEngine {
+    private weak var module: SpeechModule?
+    
+    init(module: SpeechModule) {
+        self.module = module
+    }
+    
+    func speak(text: String, rate: Float, language: String) {
+        module?.speechEngine.speak(text: text, rate: rate, language: language)
     }
 }

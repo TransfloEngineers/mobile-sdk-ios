@@ -1,17 +1,35 @@
 import UIKit
 import UserNotifications
 
-class LocalNotificationModule: Module {
+protocol UserNotifcationAdapter: AnyObject {
+    func setDelegate(_ delegate: any UNUserNotificationCenterDelegate)
+    func addRequest(_ request: UNNotificationRequest, withCompletionHandler completionHandler: @escaping (((any Error)?) -> Void))
+    func requestAuth(options: UNAuthorizationOptions, completionHandler: @escaping (Bool) -> Void)
+    func removeDelivered(withIdentifiers identifiers: [String])
+    func removePendingRequests(withIdentifiers identifiers: [String])
+    func getDelivered(completionHandler: @escaping ([NativeNotify]) -> Void)
+    func getPendingRequests(completionHandler: @escaping ([NativeNotify]) -> Void)
+    func isAuthorized(completionHandler: @escaping (Bool) -> Void)
+    func getCategories(completionHandler: @escaping (Set<UNNotificationCategory>) -> Void)
+    func setCategories(_ categories: Set<UNNotificationCategory>)
+}
     
-    private static let DEFAULT_OPEN_ACTION_IDENTIFIER = "com.apple.UNNotificationDefaultActionIdentifier"
+/// :nodoc:
+class LocalNotificationModule: Module {
+    static let moduleName = "localNotification"
+    private static let defaultOpenActionIdentifier = "com.apple.UNNotificationDefaultActionIdentifier"
+    weak var notificationAdapter: (any UserNotifcationAdapter)?
+    let options: MobileSdkOptions
     
     // remember what the client is listening for
     var actionIdentifiers: [String] = []
-    var actionHandler: ((Result<String, Error>) -> Void)?
+    var actionHandler: ((Result<String, any Error>) -> Void)?
     
-    init() {
-        super.init(name: "localNotification")
-        UNUserNotificationCenter.current().delegate = self
+    init(options: MobileSdkOptions, adapter: any UserNotifcationAdapter = UNUserNotificationCenter.current()) {
+        self.notificationAdapter = adapter
+        self.options = options
+        super.init(name: LocalNotificationModule.moduleName)
+        adapter.setDelegate(self)
         functions.append(HasPermissionFunction(module: self))
         functions.append(RequestPermissionFunction(module: self))
         functions.append(ScheduleFunction(module: self))
@@ -22,9 +40,10 @@ class LocalNotificationModule: Module {
     }
 }
 
+/// :nodoc:
 extension LocalNotificationModule: UNUserNotificationCenterDelegate {
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
-        completionHandler([.alert, .sound])
+        completionHandler([.banner, .list, .sound])
     }
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
         // default actionIdentifier: com.apple.UNNotificationDefaultActionIdentifier
@@ -33,7 +52,7 @@ extension LocalNotificationModule: UNUserNotificationCenterDelegate {
 
     func fireActionEventHandler(_ center: UNUserNotificationCenter, actionIdentifier: String, notification: UNNotification, completionHandler: @escaping () -> Void) {
         
-        let convertedActionIdentifier = actionIdentifier == LocalNotificationModule.DEFAULT_OPEN_ACTION_IDENTIFIER ? "click" : actionIdentifier
+        let convertedActionIdentifier = actionIdentifier == LocalNotificationModule.defaultOpenActionIdentifier ? "click" : actionIdentifier
         guard actionIdentifiers.firstIndex(of: convertedActionIdentifier) != nil else {
             completionHandler()
             return
@@ -70,5 +89,65 @@ extension LocalNotificationModule: UNUserNotificationCenterDelegate {
         actionHandler(Result.success(nativeActionEventResultJson))
         completionHandler()
 
+    }
+}
+
+extension UNUserNotificationCenter: UserNotifcationAdapter {
+    func setDelegate(_ delegate: any UNUserNotificationCenterDelegate) {
+        self.delegate = delegate
+    }
+    
+    func addRequest(_ request: UNNotificationRequest, withCompletionHandler completionHandler: @escaping (((any Error)?) -> Void)) {
+        add(request, withCompletionHandler: completionHandler)
+    }
+    
+    func requestAuth(options: UNAuthorizationOptions = [], completionHandler: @escaping (Bool) -> Void) {
+        requestAuthorization(options: options) { granted, _ in
+            completionHandler(granted)
+        }
+    }
+    
+    func removeDelivered(withIdentifiers identifiers: [String]) {
+        removeDeliveredNotifications(withIdentifiers: identifiers)
+    }
+    
+    func removePendingRequests(withIdentifiers identifiers: [String]) {
+        removePendingNotificationRequests(withIdentifiers: identifiers)
+    }
+    
+    func getDelivered(completionHandler: @escaping ([NativeNotify]) -> Void) {
+        getDeliveredNotifications { notifications in
+            completionHandler(notifications.compactMap { UNUserNotificationCenter.transformToNativeNotify(content: $0.request.content) })
+        }
+    }
+    
+    func getPendingRequests(completionHandler: @escaping ([NativeNotify]) -> Void) {
+        getPendingNotificationRequests { notifications in
+            completionHandler(notifications.compactMap { UNUserNotificationCenter.transformToNativeNotify(content: $0.content) })
+        }
+    }
+    
+    func isAuthorized(completionHandler: @escaping (Bool) -> Void) {
+        getNotificationSettings { setting in
+            completionHandler(setting.authorizationStatus == .authorized)
+        }
+    }
+    
+    func getCategories(completionHandler: @escaping (Set<UNNotificationCategory>) -> Void) {
+        getNotificationCategories(completionHandler: completionHandler)
+    }
+    
+    func setCategories(_ categories: Set<UNNotificationCategory>) {
+        setNotificationCategories(categories)
+    }
+
+    static func transformToNativeNotify(content: UNNotificationContent) -> NativeNotify? {
+        guard let nativeNotifyData = content.userInfo["nativeNotify"] as? Data else {
+            return nil
+        }
+        guard let nativeNotify = try? JSONDecoder().decode(NativeNotify.self, from: nativeNotifyData) else {
+            return nil
+        }
+        return nativeNotify
     }
 }

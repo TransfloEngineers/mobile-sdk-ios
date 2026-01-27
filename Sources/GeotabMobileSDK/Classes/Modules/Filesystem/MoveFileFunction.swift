@@ -7,33 +7,32 @@ struct MoveFileArgument: Codable {
 }
 
 class MoveFileFunction: ModuleFunction {
+    private static let functionName: String = "moveFile"
+    private weak var queue: DispatchQueue?
     
-    private let module: FileSystemModule
     init(module: FileSystemModule) {
-        self.module = module
-        super.init(module: module, name: "moveFile")
+        queue = module.queue
+        super.init(module: module, name: Self.functionName)
     }
     
-    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, Error>) -> Void) {
-        module.queue.async {
-            guard argument != nil, JSONSerialization.isValidJSONObject(argument!), let argData = try? JSONSerialization.data(withJSONObject: argument!) else {
-                jsCallback(Result.failure(GeotabDriveErrors.ModuleFunctionArgumentError))
-                return
-            }
-            guard let arg = try? JSONDecoder().decode(MoveFileArgument.self, from: argData) else {
-                jsCallback(Result.failure(GeotabDriveErrors.ModuleFunctionArgumentError))
-                return
-            }
+    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, any Error>) -> Void) {
+        guard let queue else {
+            jsCallback(Result.failure(GeotabDriveErrors.InvalidObjectError))
+            return
+        }
+        queue.async {
+            guard let arg = self.validateAndDecodeJSONObject(argument: argument, jsCallback: jsCallback, decodeType: MoveFileArgument.self) else { return }
+            
             let srcPath = arg.srcPath
             let destPath = arg.dstPath
             
-            guard let drvfsDir = self.module.drvfsDir else {
-                jsCallback(Result.failure(GeotabDriveErrors.FileException(error: FileSystemModule.DRVS_DOESNT_EXIST)))
+            guard let drvfsDir = FilesystemAccessHelper.drvfsDir else {
+                jsCallback(Result.failure(GeotabDriveErrors.FileException(error: FileSystemError.fileSystemDoesNotExist.rawValue)))
                 return
             }
             
             do {
-                try moveFile(fsPrefix: FileSystemModule.fsPrefix, drvfsDir: drvfsDir, srcPath: srcPath, dstPath: destPath, overwrite: arg.overwrite ?? false)
+                try moveFile(fsPrefix: FilesystemAccessHelper.fsPrefix, drvfsDir: drvfsDir, srcPath: srcPath, dstPath: destPath, overwrite: arg.overwrite ?? false)
                 jsCallback(Result.success("undefined"))
             } catch {
                 jsCallback(Result.failure(error))

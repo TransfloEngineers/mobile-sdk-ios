@@ -2,23 +2,16 @@ import Foundation
 import UIKit
 
 class ScheduleFunction: ModuleFunction {
-    private let module: LocalNotificationModule
+    private static let functionName: String = "schedule"
+    private weak var module: LocalNotificationModule?
     
     init(module: LocalNotificationModule) {
         self.module = module
-        super.init(module: module, name: "schedule")
+        super.init(module: module, name: Self.functionName)
     }
     
-    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, Error>) -> Void) {
-        guard argument != nil, JSONSerialization.isValidJSONObject(argument!), let data = try? JSONSerialization.data(withJSONObject: argument!) else {
-            jsCallback(Result.failure(GeotabDriveErrors.ModuleFunctionArgumentError))
-            return
-        }
-
-        guard let nativeNotify = try? JSONDecoder().decode(NativeNotify.self, from: data) else {
-            jsCallback(Result.failure(GeotabDriveErrors.ModuleFunctionArgumentError))
-            return
-        }
+    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, any Error>) -> Void) {
+        guard let nativeNotify = validateAndDecodeJSONObject(argument: argument, jsCallback: jsCallback, decodeType: NativeNotify.self) else { return }
         
         schedule(notification: nativeNotify) { jsCallback(Result.success("\($0)")) }
         
@@ -26,7 +19,8 @@ class ScheduleFunction: ModuleFunction {
     
     private func setNotificationCategories(notification: NativeNotify, callback: @escaping (String?) -> Void) { // returns cat id
 
-        guard let nativeActions = notification.actions, nativeActions.count > 0 else {
+        guard let module,
+              let nativeActions = notification.actions, nativeActions.count > 0 else {
             callback(nil)
             return
         }
@@ -35,18 +29,22 @@ class ScheduleFunction: ModuleFunction {
         let id = String(notification.id)
         let category = UNNotificationCategory(identifier: id, actions: actions, intentIdentifiers: [])
 
-        UNUserNotificationCenter.current().getNotificationCategories { cats in
+        module.notificationAdapter?.getCategories { cats in
             var mcats = cats
             if let index = cats.firstIndex(where: { $0.identifier == id }) {
                 mcats.remove(at: index)
             }
             mcats.insert(category)
-            UNUserNotificationCenter.current().setNotificationCategories(mcats)
+            module.notificationAdapter?.setCategories(mcats)
             callback(id)
         }
     }
     
     public func schedule(notification: NativeNotify, jsCallback: @escaping (Bool) -> Void) {
+        guard let notificationAdapter = module?.notificationAdapter else {
+            jsCallback(false)
+            return
+        }
         
         setNotificationCategories(notification: notification) { catId in
             
@@ -63,7 +61,7 @@ class ScheduleFunction: ModuleFunction {
             
             let request = UNNotificationRequest(identifier: String(notification.id), content: content, trigger: nil)
 
-            UNUserNotificationCenter.current().add(request) { error in
+            notificationAdapter.addRequest(request) { error in
                 if error != nil {
                     jsCallback(false)
                 } else {

@@ -1,20 +1,23 @@
 import Mustache
 import WebKit
+
 /**
- Module Function. This class is used for creating a Geotab Module function in the WKWebview/Javascript environment. Mostly intended for Drive and MyGeotab.
+ Defines a  function to be included in a Geotab module's Javascript API. Intended for internal Drive and MyGeotab use.
  */
 open class ModuleFunction {
-    private let _module: Module
+    public let moduleName: String
     public let name: String
+
     /**
      - Parameters:
-        - module: Module. The module this module function should reside in.
-        - name: String. Name of the module in Javascript environment.
+        - module: Module. The module this function should reside in.
+        - name: String. Name of the Javascript function defined.
      */
     public init(module: Module, name: String) {
-        self._module = module
+        moduleName = module.name
         self.name = name
     }
+
     func apiCallScript(templateRepo: TemplateRepository, template: String, scriptData: [String: Any]) -> String {
         let apiCallTemplate = try? templateRepo.template(named: template)
         guard let script = try? apiCallTemplate?.render(scriptData) else {
@@ -25,13 +28,43 @@ open class ModuleFunction {
     
     func scripts() -> String {
         let functionTemplate = try! Module.templateRepo.template(named: "ModuleFunction.Script")
-        let scriptData: [String: Any] = ["geotabModules": Module.geotabModules, "moduleName": _module.name, "geotabNativeCallbacks": Module.geotabNativeCallbacks, "callbackPrefix": Module.callbackPrefix, "functionName": name]        
+        let scriptData: [String: Any] = ["geotabModules": Module.geotabModules, "moduleName": moduleName, "geotabNativeCallbacks": Module.geotabNativeCallbacks, "callbackPrefix": Module.callbackPrefix, "functionName": name]        
         guard let functionScript = try? functionTemplate.render(scriptData) else {
             return ""
         }
         return functionScript
     }
-    open func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, Error>) -> Void) {
+    
+    public func validateAndDecodeJSONObject<T>(argument: Any?, jsCallback: @escaping (Result<String, any Error>) -> Void, decodeType: T.Type) -> T? where T: Decodable {
+        guard argument != nil, JSONSerialization.isValidJSONObject(argument!), let data = try? JSONSerialization.data(withJSONObject: argument!) else {
+            jsCallback(Result.failure(GeotabDriveErrors.ModuleFunctionArgumentError))
+            return nil
+        }
+        
+        guard let arg = try? JSONDecoder().decode(decodeType.self, from: data) else {
+            jsCallback(Result.failure(GeotabDriveErrors.ModuleFunctionArgumentError))
+            return nil
+        }
+        return arg
+    }
+
+    /// Validates and decodes JSON argument for Auth module functions.
+    /// Throws AuthError.moduleFunctionArgumentError on validation or decoding failure.
+    public func validateAndDecodeAuthArgument<T: Decodable>(argument: Any?) throws -> T {
+        guard let arg = argument,
+              JSONSerialization.isValidJSONObject(arg),
+              let data = try? JSONSerialization.data(withJSONObject: arg) else {
+            throw AuthError.moduleFunctionArgumentError(ModuleFunctionArgumentTypeError.invalidArgument.localizedDescription)
+        }
+
+        guard let decoded = try? JSONDecoder().decode(T.self, from: data) else {
+            throw AuthError.moduleFunctionArgumentError(ModuleFunctionArgumentTypeError.invalidArgument.localizedDescription)
+        }
+
+        return decoded
+    }
+
+    open func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, any Error>) -> Void) {
         fatalError("Must Override")
     }
     

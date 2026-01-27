@@ -1,14 +1,15 @@
 import UIKit
 
 class CancelFunction: ModuleFunction {
-    private let module: LocalNotificationModule
+    private static let cancelFunctionName: String = "cancel"
+    private weak var module: LocalNotificationModule?
     
     init(module: LocalNotificationModule) {
         self.module = module
-        super.init(module: module, name: "cancel")
+        super.init(module: module, name: Self.cancelFunctionName)
     }
     
-    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, Error>) -> Void) {
+    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, any Error>) -> Void) {
         guard let id = argument as? Int else {
             jsCallback(Result.failure(GeotabDriveErrors.ModuleFunctionArgumentError))
             return
@@ -24,9 +25,10 @@ class CancelFunction: ModuleFunction {
         
     }
     
-    public func cancel(id: Int, jsCallback: @escaping (Result<NativeNotify, Error>) -> Void) {
+    public func cancel(id: Int, jsCallback: @escaping (Result<NativeNotify, any Error>) -> Void) {
         // find the nativeNotification
-        guard let getAllFunction = module.findFunction(name: "getAll") as? GetAllFunction else {
+        guard let module,
+              let getAllFunction = module.findFunction(name: "getAll") as? GetAllFunction else {
             jsCallback(Result.failure(GeotabDriveErrors.ModuleFunctionNotFoundError))
             return
         }
@@ -38,14 +40,16 @@ class CancelFunction: ModuleFunction {
             }
             
             let requestId = "\(id)"
-            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [requestId])
-            UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [requestId])
+            module.notificationAdapter?.removeDelivered(withIdentifiers: [requestId])
+            module.notificationAdapter?.removePendingRequests(withIdentifiers: [requestId])
             
             jsCallback(Result.success(notification))
         }
     }
     
     override func scripts() -> String {
+        guard let module else { return "" }
+
         var offName = "off"
         if let offFunction = module.findFunction(name: "off") as? OffFunction {
             offName = offFunction.name
@@ -55,9 +59,7 @@ class CancelFunction: ModuleFunction {
 
         let scriptData: [String: Any] = ["geotabModules": Module.geotabModules, "moduleName": module.name, "geotabNativeCallbacks": Module.geotabNativeCallbacks, "callbackPrefix": Module.callbackPrefix, "off": offName, "functionName": name]
 
-        guard let functionScript = try? functionTemplate.render(scriptData) else {
-            return ""
-        }
+        guard let functionScript = try? functionTemplate.render(scriptData) else { return "" }
 
         return functionScript
     }

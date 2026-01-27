@@ -1,39 +1,33 @@
 import UIKit
 
 class PrintFunction: ModuleFunction {
-    private let module: PrintModule
-    private let controller = UIPrintInteractionController.shared
-
+    private static let functionName: String = "print"
+    private weak var module: PrintModule?
     init(module: PrintModule) {
         self.module = module
-        super.init(module: module, name: "print")
+        super.init(module: module, name: Self.functionName)
     }
     
-    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, Error>) -> Void) {
+    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, any Error>) -> Void) {
         
-        controller.printFormatter = module.webDriveDelegate.webView.viewPrintFormatter()
-        
-        if let presentedViewController = module.viewPresenter.presentedViewController {
-            guard presentedViewController.isBeingPresented == false && presentedViewController.isBeingDismissed == false else {
-                
+        if let presentedViewController = module?.viewPresenter?.presentedViewController {
+            guard presentedViewController.isBeingPresented == false
+                    && presentedViewController.isBeingDismissed == false else {
                 jsCallback(Result.success("undefined"))
                 return
             }
 
-          presentedViewController.dismiss(animated: true, completion: {
-            self.controller.present(animated: true, completionHandler: { _, _, _ in
-                
-                jsCallback(Result.success("undefined"))
-            })
+          presentedViewController.dismiss(animated: true, completion: { [weak self] in
+              self?.module?.viewPresenter?.presentPrintController {
+                  jsCallback(Result.success("undefined"))
+              }
           })
 
         } else {
-            controller.present(animated: true, completionHandler: { _, _, _ in
-                
+            module?.viewPresenter?.presentPrintController {
                 jsCallback(Result.success("undefined"))
-            })
+            }
         }
-        
     }
     
     override func scripts() -> String {

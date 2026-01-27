@@ -1,4 +1,8 @@
-import Foundation
+public import Foundation
+
+protocol LoginRequiredNotifying {
+    func loginRequired(arg: LoginRequiredFunctionArgument)
+}
 
 struct LoginRequiredFunctionArgument: Codable {
     let status: String
@@ -6,24 +10,34 @@ struct LoginRequiredFunctionArgument: Codable {
 }
 
 class LoginRequiredFunction: ModuleFunction {
-    private let module: UserModule
-    init(module: UserModule) {
+    private static let functionName: String = "loginRequired"
+    private weak var module: UserModule?
+    private let loginRequiredNotifier: any LoginRequiredNotifying
+    init(module: UserModule,
+         loginRequiredNotifier: any LoginRequiredNotifying = DefaulLoginRequiredNotifier()) {
         self.module = module
-        super.init(module: module, name: "loginRequired")
+        self.loginRequiredNotifier = loginRequiredNotifier
+        super.init(module: module, name: Self.functionName)
     }
     
-    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, Error>) -> Void) {
-        DispatchQueue.main.async {
-            guard argument != nil, let data = try? JSONSerialization.data(withJSONObject: argument!) else {
-                jsCallback(Result.failure(GeotabDriveErrors.ModuleFunctionArgumentError))
-                return
-            }
-            guard let arg = try? JSONDecoder().decode(LoginRequiredFunctionArgument.self, from: data) else {
-                jsCallback(Result.failure(GeotabDriveErrors.ModuleFunctionArgumentError))
-                return
-            }
-            self.module.loginRequiredCallback?(arg.status, arg.errorMessage)
+    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, any Error>) -> Void) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard let arg = self.validateAndDecodeJSONObject(argument: argument, jsCallback: jsCallback, decodeType: LoginRequiredFunctionArgument.self) else { return }
+            
+            self.module?.loginRequiredCallback?(arg.status, arg.errorMessage)
+            loginRequiredNotifier.loginRequired(arg: arg)
             jsCallback(Result.success("undefined"))
         }
+    }
+}
+
+extension Notification.Name {
+    public static let loginRequired = Notification.Name("GeotabDriveSDK.loginRequired")
+}
+
+private class DefaulLoginRequiredNotifier: LoginRequiredNotifying {
+    func loginRequired(arg: LoginRequiredFunctionArgument) {
+        NotificationCenter.default.post(name: .loginRequired, object: arg)
     }
 }
