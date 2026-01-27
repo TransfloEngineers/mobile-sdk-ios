@@ -254,12 +254,20 @@ declare namespace geotabModules {
          */
         // event: "app.log"
 
+
         /*******
          * notify SDK the "last server address".
          * @param server: string, format like "my3.geotab.com", must be ended with "geotab.com" with a subdomain name.
          *  error: If the `server` is not a valid format, callback will be called with error, otherwise success with result equal to undefined.
          */
         function updateLastServer(server: string, callback: (err?: Error, result?: undefined) => void);
+
+        /*******
+         * Clear all caches in the webview. After calling this, refreshing the webview is recommended.
+         * @param callback
+         *  result: undefined. Any other errors will be responded in the err argument of the callback.
+         */
+        function clearWebViewCache(argument: undefined, callback: (err?: Error, result?: undefined) => void);
     }
 
     namespace browser {
@@ -366,7 +374,7 @@ declare namespace geotabModules {
          * @param argument: string
          *  drvfs path of the file
          * @param callback:
-         *  result: true or false, indicating whether file is deleted. Any other errors will be responded in the err argument of the callback.
+         *  result: an array of FileInfo objects will be returned. Any other errors will be responded in the err argument of the callback.
          */
         function list(argument: string, callback: (err?: Error, result?: FileInfo[]) => void);
 
@@ -401,81 +409,90 @@ declare namespace geotabModules {
         function deleteFolder(argument: string, callback: (err?: Error, result?: undefined) => void);
     }
 
-    namespace motion {
-        enum MotionActivityType {
-            Unknown = 0,
-            Stationary,
-            Walking,
-            Running,
-            Biking,
-            Driving
-        }
-        /********
-         * start monitoring "geotab.motion" event.
-         * @param argument: undefined
-         * @param callback:
-         *  err: Error, if permission denied, or motion sensor is not available, callback will be called with an error.
-         *  result: undefined, if success, otherwise callback will be called with the corresponding motion type.
-         */
-        function startMonitoringMotionActivity(argument: undefined, callback: (err?: Error, result?: undefined) => void);
+    namespace ioxble {
 
-        /********
-         * stop monitoring "geotab.motion" event. Will always sucess even if startMonitoringMotionActivity() was not called, or called with error.
-         * @param argument: undefined
-         * @param callback:
-         *  err: Error, will always be undefined.
-         *  result: undefined.
-         */
-        function stopMonitoringMotionActivity(argument: undefined, callback: (err?: Error, result?: undefined) => void);
+        enum State {
+            Idle = 0,
+            Advertising,
+            Syncing,
+            Handshaking,
+            Connected,
+            Disconnecting
+        }
 
         /*******
-         * Motion event
-         * @param detail: MotionActivityType
-         * 
-         * To listen for the event: 
-         * window.addEventListener("geotab.motion", (param) => {
-         *     console.log("geotab.motion event: ", param.detail); // detail is of type MotionActivityType
-         * });
-         */
-        // event: "geotab.motion";
-    }
+        * Read-only property indicating the current state of the IOX BLE module.
+        * 
+        * Possible State values:
+        * 
+        * - Idle: IOX BLE is not active. Incoming connections from a GO device will not be accepted.
+        * - Advertising: IOX BLE is advertising and waiting for a GO device to connect.
+        * - Syncing: A Bluetooth connection with has been established, starting communication with the GO device.
+        * - Handshaking: Communicating protocol requirements with the GO device.
+        * - Connected: The Bluetooth connection with a GO device is ready to receive data. DeviceEvents will now be published as ioxble.godevicedata events as they are transmitted.
+        * - Disconnecting: An active connection is being taken down. A new connection won't be accepted until the process is completed. Some platforms will immediately go to an Idle state on disconnect.
+        */
+        let state: State;
 
-    namespace ioxble {
-        function start(argument: string, callback: (err?: Error, result?: undefined) => void);
+        /*******
+         * window event. Fires whenever the IOX BLE state changes
+         * @param detail: { "state" : State }
+         */
+        // event: "ioxble.state"
+
+        /**********
+        * Start the IOX BLE service and move it to the Advertising state. Until stop() is called service will automatically return to Advertising again after a disconnection.
+        * 
+        * @param argument: { uuid: string, reconnect?: boolean }. The UUID unique to the GO device that will be connected and a flag indicating whether or not to automatically reconnect to the device if the connection is lost.
+        * @param callback: (err?: Error, result?: string) => void.
+        *      - err: Error. Set if an issue occurs during start, E.g. bluetooth is not enabled.
+        *      - result: string. On a successful start this value will be set. Its content is reserved for future use.
+        */
+        function start(argument: { uuid: string, reconnect?: boolean }, callback: (err?: Error, result?: undefined) => void);
+
+        /**********
+        * Stop the IOX BLE service and return to the Idle state. 
+        * 
+        * @param argument: string. Reserved for future use. Should be set to null.
+        * @param callback: (err?: Error, result?: string) => void
+        *      - err: Error. Set if an issue occurs during stop.
+        *      - result: string. On a successful stop this value will be set. Its content is reserved for future use.
+        */
         function stop(argument: undefined, callback: (err?: Error, result?: undefined) => void);
 
         /*******
-         * ioxble.godevicedata event
-         * @param detail: GoDeviceData
-         * 
-         * To listen for the event: 
-         * window.addEventListener("ioxble.godevicedata", (param) => {
-         *     console.log("ioxble.godevicedata event: ", param.detail); // detail is of type GoDeviceData
-         * });
-         */
+        * ioxble.godevicedata event
+        * @param detail: GoDeviceData
+        *
+        * To listen for the event:
+        * 
+        * window.addEventListener("ioxble.godevicedata", (param) => {
+        *     console.log("ioxble.godevicedata event: ", param.detail); // detail is of type GoDeviceData
+        * });
+        */
         // event: "ioxble.godevicedata";
 
         /*******
-         * ioxble.error event, fires only after a successfully start() and there's an error happened. 
-         * ioxble.error will not be fired if ioxble is not started successfully.
-         * 
-         * During an start() session, error could happens. 
-         * Examples like losing connection, user invoking permission, user disabling Bluetooth device on phone.
-         * 
-         * @param detail: Error
-         * 
-         * 
-         * To listen for the iox ble error event: 
-         * window.addEventListener("ioxble.error", (param) => {
-         *     console.log("ioxble.error event: ", param.detail); // detail is of type Error
-         * });
-         */
+        * ioxble.error event, fires only after a successfully start() and an error occurs
+        * 
+        * ioxble.error will not be fired if ioxble is not started successfully.
+        *
+        * Examples: losing connection, user invoking permission, user disabling Bluetooth device on phone.
+        *
+        * @param detail: Error
+        *
+        * To listen for the iox ble error event:
+        * 
+        * window.addEventListener("ioxble.error", (param) => {
+        *     console.log("ioxble.error event: ", param.detail); // detail is of type Error
+        * });
+        */
         // event: "ioxble.error";
     }
 
     namespace sso {
         /**********
-         * initiatiate a SAML Login request. Please note if a SAML login request hasn't completed(callback function wasn't called),
+         * Initiate a SAML Login request. Please note if a SAML login request hasn't completed(callback function wasn't called),
          * and a new SAML Login is initiated, the previous request will be terminated first with callback(error).
          * @param argument: { samlLoginUrl: string }. Where samlLoginUrl is a URL of the thirdparty's website.
          * @param callback: (err?: Error, result?: string) => void
@@ -483,6 +500,17 @@ declare namespace geotabModules {
          *      - result: string. The `JSON.stringify(sessionStorage.getItem('geotab_sso_credentials'))` value from the sso.html page. That means, Drive is responsible for deserializing the result and checking if the result is null/undefined or has a value.
          */
         function samlLogin(argument: { samlLoginUrl: string }, callback: (err?: Error, result?: string) => void);
+
+        /**********
+         * Initiates a SAML Login request, similar to samlLogin, but instead run through Apple's ASWebAuthenticationSession API. The session
+         * for the ASWebAuthenticationSession API is shared with Safari, or the user's default browser on iOS. It's not intuitive, but if you
+         * need to clear it, it must be cleared from the default browser's settings, not from Geotab Drive.
+         * @param argument: { samlLoginUrl: string, ephemeralSession: bool }. Where samlLoginUrl is a URL of the third party's website. ephemeralSession controls whether state created during the login session (e.g. cookies) is saved or not. If not passed the default value is true, so no session state is saved.
+         * @param callback: (err?: Error, result?: string) => void
+         *      - err: Error. An error will be sent if anything other than success happened. This includes can't load the samlLoginUrl, user cancel's the SAML login, terminated due to a new SAML login is requested etc.
+         *      - result: string. A JSON object of the form { "credentials":{ "database":"value", "sessionId":"value", "userName":"value"), "server":"value" }
+         */
+        function samlLoginWithAS(argument: { samlLoginUrl: string }, callback: (err?: Error, result?: string) => void);
     }
 
     namespace appearance {
@@ -502,6 +530,200 @@ declare namespace geotabModules {
          * @param detail: { "appearanceType": AppearanceType }
          */
         // event: "geotab.appearance"
+    }
+
+     namespace login {
+         /*******
+         * Start the login function integrated with Chrome Custom Tabs.
+         * @param argument: { clientId: string, discoveryUri: string, loginHint: string, ephemeralSession?: boolean } ephemeralSession - A boolean indicating whether the session should be ephemeral. Defaults to `false`.
+         * @param callback:
+         *      - result: string. A GeotabAuthState object.
+         *  The loginHint parameter is mandatory as we use it to store it as username in the SecureStorage.
+         *  It is also used to pre-fill the username field in the login page.
+         *  On a successful call a GeotabAuthState object turned into JSON will be given as result
+         *  If there's an error while logging in, err will be given.
+         *  GeotabAuthState object contains the following properties:
+         * { accessToken: string }
+         */
+         function start(argument: { clientId: string, discoveryUri: string, loginHint: string , ephemeralSession? : boolean }, callback: (err?: Error, result?: string) => void);
+    }
+
+    namespace auth {
+        interface AuthError extends Error {
+            code:
+                | 'UNEXPECTED_ERROR'
+                | 'NO_DATA_FOUND'
+                | 'MODULE_FUNCTION_ARGUMENT_ERROR'
+                | 'FAILED_TO_SAVE_AUTH_STATE'
+                | 'USERNAME_MISMATCH'
+                | 'NO_ACCESS_TOKEN_FOUND'
+                | 'PARSE_FAILED_FOR_AUTH_STATE'
+                | 'TOKEN_REFRESH_FAILED'
+                | 'TOKEN_REFRESH_REAUTH_REQUIRED'
+                | 'MISSING_AUTH_DATA'
+                | 'NO_EXTERNAL_USER_AGENT'
+                | 'REVOKE_TOKEN_FAILED'
+                | 'UNEXPECTED_RESPONSE'
+                | 'NETWORK_ERROR'
+                | 'USER_CANCELLED'
+                | 'OID_GENERAL_ERROR'
+                | 'OAUTH_AUTHORIZATION_ERROR'
+                | 'OAUTH_TOKEN_ERROR';
+            message: string;
+            recoverable: boolean;
+            requiresReauthentication?: boolean;
+            username?: string;
+            underlyingError?: string;
+        }
+
+        /*******
+        * Start the login function integrated with Chrome Custom Tabs.
+        * @param argument: { clientId: string, discoveryUri: string, username: string, ephemeralSession?: boolean } ephemeralSession - A boolean indicating whether the session should be ephemeral. Defaults to `false`.
+        * @param callback:
+        *      - result: string. A GeotabAuthState object.
+        *  The username parameter is mandatory as we use it to store it as username in the SecureStorage.
+        *  It is also used to pre-fill the username field in the login page.
+        *  On a successful call a GeotabAuthState object turned into JSON will be given as result
+        *  If there's an error while logging in, err will be given.
+        *  GeotabAuthState object contains the following properties:
+        * { accessToken: string }
+        *
+        * Error Handling:
+        * - Authentication errors (AuthError) are returned as structured JSON objects with code, message, recoverable flag, and metadata
+        * - Parameter validation errors are returned as basic Error objects with just a message
+        *
+        * Check if err.code exists to determine if it's a structured AuthError:
+        *
+        * @example
+        * login(params, (err, result) => {
+        *   if (err) {
+        *     if (err.code) {
+        *       // Structured AuthError with metadata
+        *       if (err.code === 'USER_CANCELLED') {
+        *         // User cancelled, don't show error
+        *       } else if (err.recoverable) {
+        *         showRetryButton();
+        *       } else {
+        *         showError(err.message);
+        *       }
+        *     } else {
+        *       // Basic validation error
+        *       showError(err.message);
+        *     }
+        *   }
+        * });
+        *
+        * Common error codes:
+        * - MODULE_FUNCTION_ARGUMENT_ERROR: For Missing Username, ClientID, DiscoveryURL, Redirectscheme and Invalid DiscoveryURL
+        * - NO_DATA_FOUND: OAuth discovery or authorization failed
+        * - NO_EXTERNAL_USER_AGENT: Cannot create OAuth UI
+        * - USER_CANCELLED: User cancelled login (recoverable)
+        * - USERNAME_MISMATCH: JWT username doesn't match parameter
+        * - FAILED_TO_SAVE_AUTH_STATE: Keychain save failed
+        * - UNEXPECTED_ERROR: Network/AppAuth errors (check recoverable flag)
+        */
+        function login(argument: { clientId: string, discoveryUri: string, username: string , ephemeralSession? : boolean }, callback: (err?: AuthError | Error, result?: string) => void);
+
+        /*******
+          * Start the logout function.
+          * @param argument: { username: string }
+          * @param callback:
+          *      - result: string.
+          *  On a successful call a string will be given as result with a success message.
+          *  If there's an error while logging out, err will be given.
+          *
+          * Note: Token revocation and keychain deletion failures are logged but do not cause logout to fail.
+          *
+          * Error Handling:
+          * - Authentication errors (AuthError) are returned as structured JSON objects with code, message, recoverable flag, and metadata
+          * - Parameter validation errors are returned as basic Error objects with just a message
+          *
+          * @example
+          * logout(params, (err, result) => {
+          *   if (err) {
+          *     if (err.code) {
+          *       // Structured AuthError
+          *       if (err.code === 'USER_CANCELLED') {
+          *         // User cancelled, UI already dismissed
+          *       } else {
+          *         showError(err.message);
+          *       }
+          *     } else {
+          *       // Basic validation error
+          *       showError(err.message);
+          *     }
+          *   }
+          * });
+          *
+          * Common error codes:
+          * - NO_ACCESS_TOKEN_FOUND: No saved auth state for user
+          * - PARSE_FAILED_FOR_AUTH_STATE: Keychain data corrupted
+          * - MISSING_AUTH_DATA: No ID token or redirect URI
+          * - NO_EXTERNAL_USER_AGENT: Cannot create logout UI
+          * - USER_CANCELLED: User cancelled logout (recoverable)
+          * - UNEXPECTED_ERROR: End session errors (check recoverable flag)
+          */
+          function logout(argument: { username: string }, callback: (err?: AuthError | Error, result?: string) => void);
+
+        /*******
+         * Get a valid access token, refreshing if necessary.
+         * @param argument: { username: string }
+         * @param callback:
+         *      - result: string. A GeotabAuthState object.
+         *  On a successful call a GeotabAuthState object turned into JSON will be given as result
+         *  If there's an error while retrieving the access token, err will be given.
+         *  GeotabAuthState object contains the following properties:
+         * { accessToken: string }
+         *
+         * Background behavior: When app is backgrounded and auth expires, returns error without showing UI.
+         * When app returns to foreground, next getToken() call automatically triggers re-authentication.
+         *
+         * Error Handling:
+         * - Authentication errors (AuthError) are returned as structured JSON objects with code, message, recoverable flag, and metadata
+         * - Parameter validation errors are returned as basic Error objects with just a message
+         * - Use err.recoverable to determine if retry is appropriate
+         * - Use err.requiresReauthentication to trigger re-login flow
+         *
+         * @example
+         * getToken(params, (err, result) => {
+         *   if (err) {
+         *     if (err.code) {
+         *       // Structured AuthError with metadata
+         *       if (err.recoverable) {
+         *         // Network error, 5xx - show retry button
+         *         showRetryButton();
+         *       } else if (err.requiresReauthentication) {
+         *         // OAuth error, 4xx - redirect to login
+         *         redirectToLogin();
+         *       } else if (err.code === 'USER_CANCELLED') {
+         *         // User cancelled re-auth, don't show error
+         *       } else {
+         *         showError(err.message);
+         *       }
+         *     } else {
+         *       // Basic validation error (missing username)
+         *       showError(err.message);
+         *     }
+         *   }
+         * });
+         *
+         * Common error codes:
+         * - NO_ACCESS_TOKEN_FOUND: No saved auth state for user
+         * - PARSE_FAILED_FOR_AUTH_STATE: Keychain data corrupted
+         * - TOKEN_REFRESH_FAILED: Network/5xx errors (recoverable=true, retry recommended)
+         * - TOKEN_REFRESH_REAUTH_REQUIRED: OAuth errors like invalid_grant (recoverable=false, requiresReauthentication=true)
+         * - UNEXPECTED_ERROR: JSON serialization failure or other unexpected errors
+         * - Plus any login() error codes when automatic re-authentication is triggered (app in foreground)
+         *
+         * Recoverable errors (err.recoverable === true):
+         * - Network issues (no internet, DNS failure, timeouts)
+         * - HTTP 5xx server errors
+         *
+         * Non-recoverable errors (err.recoverable === false):
+         * - OAuth errors (invalid_grant, invalid_client)
+         * - HTTP 4xx client errors
+         */
+         function getToken(argument: { username: string }, callback: (err?: AuthError | Error, result?: string) => void);
     }
 
 }

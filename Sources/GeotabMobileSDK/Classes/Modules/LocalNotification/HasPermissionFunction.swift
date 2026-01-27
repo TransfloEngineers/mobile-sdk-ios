@@ -1,20 +1,16 @@
 import UIKit
 
 class HasPermissionFunction: ModuleFunction {
-    private let module: LocalNotificationModule
+    private static let functionName: String = "hasPermission"
+    private weak var module: LocalNotificationModule?
     init(module: LocalNotificationModule) {
         self.module = module
-        super.init(module: module, name: "hasPermission")
+        super.init(module: module, name: Self.functionName)
     }
     
-    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, Error>) -> Void) {
-        UNUserNotificationCenter.current().getNotificationSettings { settings in
-            if settings.authorizationStatus != .authorized {
-                jsCallback(Result.success("false"))
-            } else {
-                jsCallback(Result.success("true"))
-            }
+    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, any Error>) -> Void) {
+        module?.notificationAdapter?.isAuthorized {
+            jsCallback(Result.success(String($0)))
         }
-        
     }
 }

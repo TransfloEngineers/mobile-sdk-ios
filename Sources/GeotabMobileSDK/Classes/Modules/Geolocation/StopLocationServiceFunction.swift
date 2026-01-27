@@ -1,14 +1,19 @@
 import Foundation
 
+protocol LocationServiceStopping: Module {
+    func stopService()
+}
+
 class StopLocationServiceFunction: ModuleFunction {
-    private let module: GeolocationModule
-    init(module: GeolocationModule) {
-        self.module = module
-        super.init(module: module, name: "___stopLocationService")
+    static let functionName: String = "___stopLocationService"
+    private weak var stopper: (any LocationServiceStopping)?
+    init(stopper: any LocationServiceStopping) {
+        self.stopper = stopper
+        super.init(module: stopper, name: Self.functionName)
     }
     
-    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, Error>) -> Void) {
-        module.stopService()
+    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, any Error>) -> Void) {
+        stopper?.stopService()
         jsCallback(Result.success("undefined"))
     }
 }

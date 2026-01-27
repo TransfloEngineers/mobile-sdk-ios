@@ -1,13 +1,12 @@
 import UIKit
 
 class CameraModule: Module {
-    let webDriveDelegate: WebDriveDelegate
-    let viewPresenter: ViewPresenter
-    let imagePicker = UIImagePickerController()
-    init(webDriveDelegate: WebDriveDelegate, viewPresenter: ViewPresenter, moduleContainer: ModuleContainerDelegate) {
-        self.webDriveDelegate = webDriveDelegate
-        self.viewPresenter = viewPresenter
-        super.init(name: "camera")
-        functions.append(CaptureImageFunction(module: self, moduleContainer: moduleContainer))
+    private static let moduleName = "camera"
+
+    init(viewPresenter: any ViewPresenter) {
+        super.init(name: CameraModule.moduleName)
+        functions.append(CaptureImageFunction(module: self,
+                                              filesystem: FilesystemAccessHelper(),
+                                              imageAccessor: ImageAccessHelper(viewPresenter: viewPresenter, sourceType: .camera)))
     }
-}
+}                         

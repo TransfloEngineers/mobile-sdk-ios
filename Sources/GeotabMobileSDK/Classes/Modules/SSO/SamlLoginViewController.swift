@@ -1,13 +1,14 @@
 import Foundation
 import WebKit
 
+/// :nodoc:
 class SamlLoginViewController: UIViewController {
     
     private var swipeDownDismissal = true
     
-    var onDimissal: ((Result<String, Error>) -> Void)?
+    var onDimissal: ((Result<String, any Error>) -> Void)?
     var samlLoginUrl: String!
-    var jsCallback: ((Result<String, Error>) -> Void)?
+    var jsCallback: ((Result<String, any Error>) -> Void)?
 
     @IBOutlet var webview: WKWebView!
     
@@ -30,7 +31,8 @@ class SamlLoginViewController: UIViewController {
         
         webview.navigationDelegate = self
         
-        webview.evaluateJavaScript("navigator.userAgent") { ua, _  in
+        webview.evaluateJavaScript("navigator.userAgent") { [weak self] ua, _  in
+            guard let self else { return }
             let defaultUA = ua ?? ""
             self.webview.customUserAgent = "\(defaultUA) MobileSDK/\(MobileSdkConfig.sdkVersion) \(device.appName)/\(device.version)"
             self.webview.load(URLRequest(url: url))
@@ -45,6 +47,11 @@ class SamlLoginViewController: UIViewController {
             onDimissal?(Result.failure(GeotabDriveErrors.SamlLoginCancelled))
             onDimissal = nil
         }
+    }
+    
+    deinit {
+        webview?.navigationDelegate = nil
+        webview?.stopLoading()
     }
     
     @IBAction func cancel() {
@@ -89,6 +96,7 @@ class SamlLoginViewController: UIViewController {
     
 }
 
+/// :nodoc:
 extension SamlLoginViewController: WKNavigationDelegate {
     public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard navigationAction.request.url?.absoluteString.lowercased().hasPrefix("http") == true else {
@@ -97,8 +105,14 @@ extension SamlLoginViewController: WKNavigationDelegate {
         }
         decisionHandler(.allow)
     }
-    
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+
+    // Uncomment this method to allow testing against localhost and other self signed https
+    //    public func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+    //        let cred = URLCredential(trust: challenge.protectionSpace.serverTrust!)
+    //        completionHandler(.useCredential, cred)
+    //    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
         dismissWith(error: GeotabDriveErrors.SamlLoginError(error: "Network error"))
     }
     
@@ -114,27 +128,27 @@ extension SamlLoginViewController: WKNavigationDelegate {
         webView.evaluateJavaScript("sessionStorage.getItem('geotab_sso_credentials');") { result, error in
             if error != nil {
                 DispatchQueue.main.async {
-                    self.dismissWith(error: GeotabDriveErrors.SamlLoginError(error: "Failed retrieving session"))
+                    self.dismissWith(error: GeotabDriveErrors.SamlLoginError(error: SsoError.sessionRetrieveFailedError.rawValue))
                     
                 }
             } else {
                 guard let s = result as? String else {
                     DispatchQueue.main.async {
-                        self.dismissWith(error: GeotabDriveErrors.SamlLoginError(error: "Failed parsing session"))
+                        self.dismissWith(error: GeotabDriveErrors.SamlLoginError(error: SsoError.sessionParseFailedError.rawValue))
                     }
                     return
                 }
                 do {
                     let array = [s]
                     let json: Data = try JSONSerialization.data(withJSONObject: array, options: [])
-                    var data: String = String(data: json, encoding: .utf8)!
+                    var data: String = String(decoding: json, as: UTF8.self)
                     data = String(data.dropFirst().dropLast())
                     DispatchQueue.main.async {
                         self.dismissWith(result: data)
                     }
                 } catch {
                     DispatchQueue.main.async {
-                        self.dismissWith(error: GeotabDriveErrors.SamlLoginError(error: "Failed parsing session"))
+                        self.dismissWith(error: GeotabDriveErrors.SamlLoginError(error: SsoError.sessionParseFailedError.rawValue))
                     }
                 }
             }

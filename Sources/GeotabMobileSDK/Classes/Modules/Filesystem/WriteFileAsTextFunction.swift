@@ -7,22 +7,23 @@ struct WriteFileAsTextArgument: Codable {
 }
 
 class WriteFileAsTextFunction: ModuleFunction {
-    private let module: FileSystemModule
+    private static let functionName: String = "writeFileAsText"
+    private weak var queue: DispatchQueue?
+
     init(module: FileSystemModule) {
-        self.module = module
-        super.init(module: module, name: "writeFileAsText")
+        queue = module.queue
+        super.init(module: module, name: Self.functionName)
     }
     
-    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, Error>) -> Void) {
-        module.queue.async {
-            guard argument != nil, JSONSerialization.isValidJSONObject(argument!), let argData = try? JSONSerialization.data(withJSONObject: argument!) else {
-                jsCallback(Result.failure(GeotabDriveErrors.ModuleFunctionArgumentError))
-                return
-            }
-            guard let arg = try? JSONDecoder().decode(WriteFileAsTextArgument.self, from: argData) else {
-                jsCallback(Result.failure(GeotabDriveErrors.ModuleFunctionArgumentError))
-                return
-            }
+    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, any Error>) -> Void) {
+        guard let queue else {
+            jsCallback(Result.failure(GeotabDriveErrors.InvalidObjectError))
+            return
+        }
+        
+        queue.async {
+            guard let arg = self.validateAndDecodeJSONObject(argument: argument, jsCallback: jsCallback, decodeType: WriteFileAsTextArgument.self) else { return }
+            
             let path = arg.path
             
             guard let data = arg.data.data(using: .utf8) else {
@@ -30,19 +31,18 @@ class WriteFileAsTextFunction: ModuleFunction {
                 return
             }
             
-            guard let drvfsDir = self.module.drvfsDir else {
-                jsCallback(Result.failure(GeotabDriveErrors.FileException(error: FileSystemModule.DRVS_DOESNT_EXIST)))
+            guard let drvfsDir = FilesystemAccessHelper.drvfsDir else {
+                jsCallback(Result.failure(GeotabDriveErrors.FileException(error: FileSystemError.fileSystemDoesNotExist.rawValue)))
                 return
             }
             
             do {
-                let size = try writeFile(fsPrefix: FileSystemModule.fsPrefix, drvfsDir: drvfsDir, path: path, data: data, offset: arg.offset)
+                let size = try writeFile(fsPrefix: FilesystemAccessHelper.fsPrefix, drvfsDir: drvfsDir, path: path, data: data, offset: arg.offset)
                 jsCallback(Result.success("\(size)"))
             } catch {
                 jsCallback(Result.failure(error))
                 return
             }
-            
         }
     }
 }

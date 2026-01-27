@@ -4,24 +4,34 @@ struct StartLocationServiceArgument: Codable {
     let enableHighAccuracy: Bool?
 }
 
+protocol LocationServiceStarting: Module {
+    func startService(enableHighAccuracy: Bool) throws
+}
+
 class StartLocationServiceFunction: ModuleFunction {
-    private let module: GeolocationModule
-    init(module: GeolocationModule) {
-        self.module = module
-        super.init(module: module, name: "___startLocationService")
+    static let functionName: String = "___startLocationService"
+    private weak var starter: (any LocationServiceStarting)?
+    init(starter: any LocationServiceStarting) {
+        self.starter = starter
+        super.init(module: starter, name: Self.functionName)
     }
     
-    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, Error>) -> Void) {
-        var enableHA = false
-        if argument != nil, JSONSerialization.isValidJSONObject(argument!), let argData = try? JSONSerialization.data(withJSONObject: argument!) {
-            guard let argument = try? JSONDecoder().decode(StartLocationServiceArgument.self, from: argData) else {
+    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, any Error>) -> Void) {
+        
+        var enableHighAccuracy = false
+        
+        if let argument = argument {
+            guard JSONSerialization.isValidJSONObject(argument),
+                  let argData = try? JSONSerialization.data(withJSONObject: argument),
+                  let decodedArgument = try? JSONDecoder().decode(StartLocationServiceArgument.self, from: argData) else {
                 jsCallback(Result.failure(GeotabDriveErrors.ModuleFunctionArgumentError))
                 return
             }
-            enableHA = argument.enableHighAccuracy ?? false
+            enableHighAccuracy = decodedArgument.enableHighAccuracy ?? false
         }
+        
         do {
-            try module.startService(enableHighAccuracy: enableHA)
+            try starter?.startService(enableHighAccuracy: enableHighAccuracy)
             jsCallback(Result.success("undefined"))
         } catch {
             jsCallback(Result.failure(error))

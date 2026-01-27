@@ -1,22 +1,17 @@
 import WebKit
 
 class GetAllUsersFunction: ModuleFunction {
-    private let module: UserModule
-    var callbacks: [String: (Result<String, Error>) -> Void] = [:]
-    init(module: UserModule) {
-        self.module = module
-        super.init(module: module, name: "getAll")
+    private static let functionName: String = "getAll"
+    private weak var scriptGateway: (any ScriptGateway)?
+    var callbacks: [String: (Result<String, any Error>) -> Void] = [:]
+    init(module: UserModule, scriptGateway: any ScriptGateway) {
+        self.scriptGateway = scriptGateway
+        super.init(module: module, name: Self.functionName)
     }
     
-    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, Error>) -> Void) {
-        guard argument != nil, JSONSerialization.isValidJSONObject(argument!), let data = try? JSONSerialization.data(withJSONObject: argument!) else {
-            jsCallback(Result.failure(GeotabDriveErrors.ModuleFunctionArgumentError))
-            return
-        }
-        guard let arg = try? JSONDecoder().decode(DriveApiFunctionArgument.self, from: data) else {
-            jsCallback(Result.failure(GeotabDriveErrors.ModuleFunctionArgumentError))
-            return
-        }
+    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, any Error>) -> Void) {
+        guard let arg = validateAndDecodeJSONObject(argument: argument, jsCallback: jsCallback, decodeType: DriveApiFunctionArgument.self) else { return }
+        
         guard let callback = callbacks[arg.callerId] else {
             jsCallback(Result.failure(GeotabDriveErrors.InvalidCallError))
             return
@@ -28,8 +23,8 @@ class GetAllUsersFunction: ModuleFunction {
             return
         }
         guard let users = arg.result else {
-            callback(Result.failure(GeotabDriveErrors.JsIssuedError(error: "No users returned")))
-            jsCallback(Result.failure(GeotabDriveErrors.JsIssuedError(error: "No users returned")))
+            callback(Result.failure(GeotabDriveErrors.JsIssuedError(error: UserError.noUsersReturned.rawValue)))
+            jsCallback(Result.failure(GeotabDriveErrors.JsIssuedError(error: UserError.noUsersReturned.rawValue)))
             callbacks[arg.callerId] = nil
             return
         }
@@ -38,19 +33,26 @@ class GetAllUsersFunction: ModuleFunction {
         jsCallback(Result.success("undefined"))
     }
     
-    func call(_ callback: @escaping (Result<String, Error>) -> Void) {
+    func call(_ callback: @escaping (Result<String, any Error>) -> Void) {
+        guard let scriptGateway else {
+            callback(Result.failure(GeotabDriveErrors.InvalidObjectError))
+            return
+        }
+        
         let callerId = UUID().uuidString
         self.callbacks[callerId] = callback
         
-        let script = apiCallScript(templateRepo: Module.templateRepo, template: "ModuleFunction.GetAllUsersFunction.Api", scriptData: ["moduleName": module.name, "functionName": name, "callerId": callerId])
-        module.webDriveDelegate.evaluate(script: script) { result in
+        let script = apiCallScript(templateRepo: Module.templateRepo, template: "ModuleFunction.GetAllUsersFunction.Api", scriptData: ["moduleName": moduleName, "functionName": name, "callerId": callerId])
+        scriptGateway.evaluate(script: script) { [weak self] result in
+            guard let self else { return }
+            
             switch result {
             case .success: return
             case .failure:
                 if self.callbacks[callerId] == nil {
                     return
                 }
-                callback(Result.failure(GeotabDriveErrors.JsIssuedError(error: "Evaluating JS failed")))
+                callback(Result.failure(GeotabDriveErrors.JsIssuedError(error: UserError.jsEvalFailed.rawValue)))
                 self.callbacks[callerId] = nil
             }
         }

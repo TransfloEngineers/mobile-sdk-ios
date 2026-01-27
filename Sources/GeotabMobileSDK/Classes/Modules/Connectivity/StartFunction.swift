@@ -1,26 +1,30 @@
+protocol ConnectivityStarting: Module {
+    var started: Bool { get }
+    func start() -> Bool
+}
+
 class StartFunction: ModuleFunction {
-    private let module: ConnectivityModule
+    private static let functionName: String = "start"
+    private weak var starter: (any ConnectivityStarting)?
     
-    init(module: ConnectivityModule) {
-        self.module = module
-        super.init(module: module, name: "start")
+    init(starter: any ConnectivityStarting) {
+        self.starter = starter
+        super.init(module: starter, name: Self.functionName)
     }
-    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, Error>) -> Void) {
+    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, any Error>) -> Void) {
         let result = start()
         jsCallback(Result.success("\(result)"))
     }
     
     func start() -> Bool {
-        if module.started {
-            return module.started
-        }
-
-        do {
-            try module.reachability?.startNotifier()
-            module.started = true
-            return true
-        } catch {
+        guard let starter = starter else {
             return false
         }
+        
+        guard !starter.started else {
+            return true
+        }
+
+        return starter.start()
     }
 }

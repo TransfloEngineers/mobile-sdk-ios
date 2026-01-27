@@ -1,16 +1,18 @@
 import Foundation
 
+enum FileSystemError: String {
+    case fileSystemDoesNotExist = "drvfs filesystem doesn't exist."
+}
+
 class FileSystemModule: Module {
-    static let DRVS_DOESNT_EXIST = "Drvfs filesystem doesn't exist."
-    static let fsPrefix = "drvfs:///"
-    let queue: DispatchQueue
-    let drvfsDir: URL?
+    static let moduleName = "fileSystem"
+
+    let queue = DispatchQueue(label: "Filesystem Worker Queue")
+    
     init() {
-        queue = DispatchQueue(label: "Filesystem Worker Queue")
-        let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
-        drvfsDir = paths.count > 0 ? paths[0].appendingPathComponent("drvfs", isDirectory: true) : nil
         
-        super.init(name: "fileSystem")
+        super.init(name: FileSystemModule.moduleName)
+        
         functions.append(WriteFileAsTextFunction(module: self))
         functions.append(WriteFileAsBinaryFunction(module: self))
         functions.append(ReadFileAsTextFunction(module: self))

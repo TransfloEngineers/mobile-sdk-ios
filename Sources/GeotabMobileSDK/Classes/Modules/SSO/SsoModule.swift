@@ -1,12 +1,16 @@
 import Foundation
 
-class SsoModule: Module {
+enum SsoError: String {
+    case sessionParseFailedError = "Failed parsing session."
+    case sessionRetrieveFailedError = "Failed retrieving session."
+}
 
-    let viewPresenter: ViewPresenter
+class SsoModule: Module {
+    private static let moduleName = "sso"
     
-    init(viewPresenter: ViewPresenter) {
-        self.viewPresenter = viewPresenter
-        super.init(name: "sso")
-        functions.append(SamlLoginFunction(module: self, name: "samlLogin"))
+    init(viewPresenter: any ViewPresenter) {
+        super.init(name: SsoModule.moduleName)
+        functions.append(SamlLoginFunction(module: self, viewPresenter: viewPresenter))
+        functions.append(SamlLoginWithASFunction(module: self))
     }
 }

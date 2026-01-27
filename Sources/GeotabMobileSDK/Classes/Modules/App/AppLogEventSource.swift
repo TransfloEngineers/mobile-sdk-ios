@@ -2,8 +2,9 @@ import Foundation
 
 class AppLogEventSource {
     
+    // swift-format-ignore: AlwaysUseLowerCamelCase
     enum LogLevel: Int, Codable {
-        case Info = 0, Warn, Error
+        case info = 0, warn, Error
     }
     
     public struct LogDetail: Codable {
@@ -11,7 +12,7 @@ class AppLogEventSource {
         let level: LogLevel
     }
 
-    private weak var webDriveDelegate: WebDriveDelegate?
+    private weak var scriptGateway: (any ScriptGateway)?
     
     private let logLimit: Int
     private let interval: TimeInterval
@@ -20,8 +21,8 @@ class AppLogEventSource {
     private var lastReset = Date()
     
     // default is no more than 10 logs fired per 30 mins
-    init(webDriveDelegate: WebDriveDelegate, logLimit: Int = 10, interval: TimeInterval = 30 * 60) {
-        self.webDriveDelegate = webDriveDelegate
+    init(scriptGateway: (any ScriptGateway)?, logLimit: Int = 10, interval: TimeInterval = 30 * 60) {
+        self.scriptGateway = scriptGateway
         self.logLimit = logLimit
         self.interval = interval
         
@@ -47,7 +48,7 @@ class AppLogEventSource {
                 guard let self else {
                     return
                 }
-                guard let webDriveDelegate = self.webDriveDelegate,
+                guard let scriptGateway = self.scriptGateway,
                       let userInfo = notification.userInfo,
                       let level = userInfo["level"] as? Logger.Level,
                       let tag = userInfo["tag"] as? String,
@@ -65,15 +66,15 @@ class AppLogEventSource {
                 }
                 
                 var detailMessage = "[\(tag)] [\(level.rawValue)] \(message)"
-                if let error = userInfo["error"] as? Error {
+                if let error = userInfo["error"] as? (any Error) {
                     detailMessage += " \(error.localizedDescription)"
                 }
                 
                 let eventDetail = MobileEvent(detail: LogDetail(message: detailMessage, level: level.toLogLevel()))
 
-                if let encodedDetailData = try? JSONEncoder().encode(eventDetail),
-                   let encodedDetailString = String(data: encodedDetailData, encoding: .utf8) {
-                    webDriveDelegate.push(moduleEvent: ModuleEvent(event: "app.log", params: encodedDetailString)) { _ in }
+                if let encodedDetailData = try? JSONEncoder().encode(eventDetail) {
+                   let encodedDetailString = String(decoding: encodedDetailData, as: UTF8.self)
+                    scriptGateway.push(moduleEvent: ModuleEvent(event: "app.log", params: encodedDetailString)) { _ in }
                 }
             }
     }
@@ -88,17 +89,11 @@ extension Logger.Level {
         case .error:
             return AppLogEventSource.LogLevel.Error
         case .warn:
-            return AppLogEventSource.LogLevel.Warn
+            return AppLogEventSource.LogLevel.warn
         case .info:
-            return AppLogEventSource.LogLevel.Info
+            return AppLogEventSource.LogLevel.info
         case .debug:
-            return AppLogEventSource.LogLevel.Info
+            return AppLogEventSource.LogLevel.info
         }
     }
-}
-
-// MARK: - utilities
-
-struct MobileEvent<T: Codable>: Codable {
-    let detail: T
 }

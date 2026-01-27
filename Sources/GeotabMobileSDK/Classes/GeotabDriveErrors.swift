@@ -1,39 +1,45 @@
-import Foundation
+public import Foundation
+
+// swift-format-ignore: AlwaysUseLowerCamelCase
 
 /**
  Geotab SDK Error Types
  */
-public enum GeotabDriveErrors: Error {
+public enum GeotabDriveErrors: Error, Equatable {
     /**
-     Indicates there's a duplicate Module Function existed.
+     A duplicate ModuleFunction has been defined.
      */
     case DuplicateModuleFunctionError
     /**
-     Indicates failure registering module function
+     A failure registering a module function.
      */
     case ModuleFunctionRegistrationError
     /**
-     Indicate there's an error pushing Module Event to Drive.
+     An error pushing Module Event to Drive.
      */
     case ModuleEventPushError
     /**
-     Indicates the argument passed to Module function is not right.
+     The argument passed to a Module Function is incorrect.
      */
     case ModuleFunctionArgumentError
     /**
-     Indicates there's something wrong of the API call to Drive. Usually because of the environment in Drive has changed and the previous call request became orphan.
+     The argument passed to a Module Function is incorrect with error message.
+     */
+    case ModuleFunctionArgumentErrorWithMessage(error: String)
+    /**
+     There's an issue with the API call. A common issue is that Drive has changed and the previous call request became orphaned.
      */
     case InvalidCallError
     /**
-     Indicuates that an API call to Drive has timed out. Such error happens when Drive could not deliver the API call result back in time.
+     An API call to Drive has timed out.
      */
     case ApiCallTimeoutError
     /**
-     Indicates that an API call to the Drive failed from Javascript. For example when js failed providing result, it provides error.
+     An API call to the Drive failed at the Javascript layer.
      */
     case JsIssuedError(error: String)
     /**
-     Module function not found.
+     A Module Function was not found.
      */
     case ModuleFunctionNotFoundError
     /**
@@ -41,7 +47,7 @@ public enum GeotabDriveErrors: Error {
      */
     case ScheduleNotificationError
     /**
-     The notification in context is not found.
+     The notification is not found in the current context.
      */
     case NotificationNotFound
     /**
@@ -49,11 +55,11 @@ public enum GeotabDriveErrors: Error {
      */
     case NoImageFileAvailableError
     /**
-     Something wrong with the capture image request.
+     Something went wrong with the capture image request.
      */
     case CaptureImageError(error: String)
     /**
-     File exception related to a file operation.
+     An exception has occured related to a file operation.
      */
     case FileException(error: String)
     /**
@@ -61,7 +67,7 @@ public enum GeotabDriveErrors: Error {
      */
     case GeolocationError(error: String)
     /**
-     Error related to App Module
+     Error related to the App Module
      */
     case AppModuleError(error: String)
     /**
@@ -88,6 +94,22 @@ public enum GeotabDriveErrors: Error {
     case IoxEventParsingError(error: String)
     
     case OperationCallFailed(error: String)
+    /**
+     Error related to Local Storage Module
+     */
+    case StorageModuleError(error: String)
+    /**
+    Indicates a required object is invalid or has been released from memory
+    */
+    case InvalidObjectError
+    
+    case PushNotificationModuleError(error: String)
+    /**
+     Indicates  AuthFailedError
+    */
+    case AuthFailedError(error: String)
+    
+    
 }
 
 extension GeotabDriveErrors: LocalizedError {
@@ -101,6 +123,8 @@ extension GeotabDriveErrors: LocalizedError {
             return "GeotabDriveErrors[ModuleEventPushError]"
         case .ModuleFunctionArgumentError:
             return "GeotabDriveErrors[ModuleFunctionArgumentError]"
+        case .ModuleFunctionArgumentErrorWithMessage(let errMsg):
+            return "GeotabDriveErrors[ModuleFunctionArgumentError]: \(errMsg)"
         case .InvalidCallError:
             return "GeotabDriveErrors[InvalidCallError]"
         case .ApiCallTimeoutError:
@@ -139,6 +163,14 @@ extension GeotabDriveErrors: LocalizedError {
             return "GeotabDriveErrors[IoxEventParsingError]: \(errMsg)"
         case .OperationCallFailed(let errMsg):
             return "GeotabDriveErrors[OperationCallFailed]: \(errMsg)"
+        case .StorageModuleError(let errMsg):
+            return "GeotabDriveErrors[StorageModuleError]: \(errMsg)"
+        case .InvalidObjectError:
+            return "GeotabDriveErrors[InvalidObjectError]"
+        case .PushNotificationModuleError(let errMsg):
+            return "GeotabDriveErrors[PushNotificationModuleError]: \(errMsg)"
+        case .AuthFailedError(error: let errMsg):
+            return "GeotabDriveErrors[AuthFailedError]: \(errMsg)"
         }
     }
 }

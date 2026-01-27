@@ -1,5 +1,10 @@
 import SafariServices
 
+protocol BrowserWindowOpening: Module {
+    func openInExternalBrowser(url: URL)
+    func openInAppBrowser(url: URL)
+}
+
 private enum HtmlTarget: String {
     case blank = "_blank"
     case `self` = "_self"
@@ -16,23 +21,17 @@ struct OpenBrowserWindowArguments: Codable {
 }
 
 class OpenBrowserWindowFunction: ModuleFunction {
-    private let module: BrowserModule
-    init(module: BrowserModule) {
-        self.module = module
-        super.init(module: module, name: "openBrowserWindow")
+    private static let functionName: String = "openBrowserWindow"
+    private weak var browserOpener: (any BrowserWindowOpening)?
+    init(browserOpener: any BrowserWindowOpening) {
+        self.browserOpener = browserOpener
+        super.init(module: browserOpener, name: Self.functionName)
     }
     
-    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, Error>) -> Void) {
+    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, any Error>) -> Void) {
         DispatchQueue.main.async {
             
-            guard argument != nil, JSONSerialization.isValidJSONObject(argument!), let argData = try? JSONSerialization.data(withJSONObject: argument!) else {
-                jsCallback(Result.failure(GeotabDriveErrors.ModuleFunctionArgumentError))
-                return
-            }
-            guard let arg = try? JSONDecoder().decode(OpenBrowserWindowArguments.self, from: argData) else {
-                jsCallback(Result.failure(GeotabDriveErrors.ModuleFunctionArgumentError))
-                return
-            }
+            guard let arg = self.validateAndDecodeJSONObject(argument: argument, jsCallback: jsCallback, decodeType: OpenBrowserWindowArguments.self) else { return }
             
             guard let urlString = arg.url as String?,
                 let url = URL(string: urlString),
@@ -44,17 +43,12 @@ class OpenBrowserWindowFunction: ModuleFunction {
             let target = HtmlTarget(rawValue: targetString)
             switch target {
             case .blank, .system, .none:
-                UIApplication.shared.open(url)
-            case .parent, .top, .`self`, .iab:
-                if self.module.inAppBrowserVC != nil {
-                    self.module.inAppBrowserVC?.dismiss(animated: true)
-                    self.module.inAppBrowserVC = nil
-                }
+                self.browserOpener?.openInExternalBrowser(url: url)
                 
-                self.module.inAppBrowserVC = SFSafariViewController(url: url)
-                self.module.viewPresenter.present(self.module.inAppBrowserVC!, animated: true, completion: nil)
-             
+            case .parent, .top, .`self`, .iab:
+                self.browserOpener?.openInAppBrowser(url: url)
             }
+            
             jsCallback(Result.success("\"\(urlString)\""))
         }
     }

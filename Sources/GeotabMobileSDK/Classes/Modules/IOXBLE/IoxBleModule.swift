@@ -1,318 +1,173 @@
 import Foundation
 import CoreBluetooth
 
+enum IoxBleError: String {
+    case blePoweredOffError = "BLE is in the power off state."
+    case bleUnauthorizedError = "BLE usage is unauthorized."
+    case bleUnsupportedError = "BLE is unsupported."
+    case bleServiceAlreadyStarted = "Another service has already been started."
+}
+
 class IoxBleModule: Module {
+    static let moduleName = "ioxble"
     
-    private let webDriveDelegate: WebDriveDelegate
-    private let executer: AsyncMainExecuterAdapter
-    private let queue: OperationQueue
-    private let transformer: DeviceEventTransformer = DeviceEventTransformer()
+    enum State: Int {
+        case idle = 0, advertising, syncing, handshaking, connected, disconnecting
+    }
+
+    private static let errorEventName = "ioxble.error"
+    private static let deviceEventName = "ioxble.godevicedata"
+    private static let stateEventName = "ioxble.state"
+    private static let statePropertyName = "state"
     
-    private var isStarted = false
-    private var isConnected = false
-    private var startListener: ((Result<String, Error>) -> Void)?
-    private var partialGoData: PartialGoData = PartialGoData()
+    private weak var scriptGateway: (any ScriptGateway)?
+    private var startListener: ((Result<String, any Error>) -> Void)?
+    private var client: any IoxClient
+    private let executer: any AsyncMainExecuterAdapter
+    
+    private let jsonEncoder: JSONEncoder
+
     var ioxDeviceEventCallback: IOXDeviceEventCallbackType?
     
-    private lazy var peripheralManager: CBPeripheralManager = CBPeripheralManager(delegate: self, queue: .main)
-    private var central: CBCentral?
-    private var service: CBMutableService?
-    
-    private let notifyCharId = CBUUID(nsuuid: UUID(uuidString: "430F2EA3-C765-4051-9134-A341254CFD00")!)
-    private let writeCharId = CBUUID(nsuuid: UUID(uuidString: "906EE7E0-D8DB-44F3-AF54-6B0DFCECDF1C")!)
-    private lazy var notifyChar = CBMutableCharacteristic(type: notifyCharId, properties: [.notify, .read], value: nil, permissions: [.readable, .writeable])
-    private lazy var writeChar = CBMutableCharacteristic(type: writeCharId, properties: [.writeWithoutResponse], value: nil, permissions: [.writeable])
-    private lazy var descriptor = CBMutableDescriptor(type: CBUUID(string: "2902"), value: nil)
-    
-    convenience init(webDriveDelegate: WebDriveDelegate) {
-        self.init(webDriveDelegate: webDriveDelegate, executer: MainExecuter(), queue: OperationQueue())
+    convenience init(scriptGateway: any ScriptGateway) {
+        let ex = MainExecuter()
+        self.init(scriptGateway: scriptGateway,
+                  executer: ex,
+                  client: DefaultIoxClient(executer: ex, queue: OperationQueue()))
     }
     
     // init for testing
-    init(webDriveDelegate: WebDriveDelegate, executer: AsyncMainExecuterAdapter, queue: OperationQueue) {
-        self.webDriveDelegate = webDriveDelegate
+    init(scriptGateway: any ScriptGateway, executer: any AsyncMainExecuterAdapter, client: any IoxClient) {
+        self.scriptGateway = scriptGateway
         self.executer = executer
-        self.queue = queue
-        super.init(name: "ioxble")
+        self.client = client
+        self.jsonEncoder = JSONEncoder()
+        super.init(name: IoxBleModule.moduleName)
         functions.append(StartIoxBleFunction(module: self))
         functions.append(StopIoxBleFunction(module: self))
-    
-        self.queue.qualityOfService = .userInitiated
-        self.queue.maxConcurrentOperationCount = 1
+            
+        self.client.delegate = self
+        
+        initJsonEncoder()
     }
     
-    func callStartListener(result: Result<String, Error>) {
+    override func scripts() -> String {
+        var scripts = super.scripts()
+        scripts += updateStatePropertyScript(state: client.state)
+        return scripts
+    }
+
+    func callStartListener(result: Result<String, any Error>) {
         guard startListener != nil else {
             return
         }
         startListener!(result)
         startListener = nil
-        service = nil // done handling service
     }
     
-    func authStateDeniedOrRestricted() -> Bool {
-        var denRes = false
-        if #available(iOS 13, *) {
-            let authStatus = peripheralManager.authorization
-            denRes = authStatus == .restricted || authStatus == .denied
-        } else {
-            let authStatus = CBPeripheralManager.authorizationStatus()
-            denRes = authStatus == .restricted || authStatus == .denied
-        }
-        return denRes
-    }
-    
-    func authStateNotDetermined() -> Bool {
-        var notDet = false
-        if #available(iOS 13, *) {
-            notDet = peripheralManager.authorization == .notDetermined
-        } else {
-            notDet = CBPeripheralManager.authorizationStatus() == .notDetermined
-        }
-        return notDet
-    }
-    
-    func start(serviceId: String, _ jsCallback: @escaping (Result<String, Error>) -> Void) {
-        
+    func start(serviceId: String, reconnect: Bool, _ jsCallback: @escaping (Result<String, any Error>) -> Void) {
         guard startListener == nil else {
             jsCallback(Result.failure(GeotabDriveErrors.IoxBleError(error: "One call at a time only")))
             return
         }
-        
         startListener = jsCallback
-        
-        guard !isStarted else {
-            callStartListener(result: Result.failure(GeotabDriveErrors.IoxBleError(error: "Service is already started")))
-            return
-        }
-        
-        guard service == nil else {
-            callStartListener(result: Result.failure(GeotabDriveErrors.IoxBleError(error: "Another service is in starting progress")))
-            return
-        }
-        
-        guard let uuid = UUID(uuidString: serviceId) else {
-            callStartListener(result: Result.failure(GeotabDriveErrors.IoxBleError(error: "\(serviceId) is not an UUID")))
-            return
-        }
-        
-        // remember service that needs to be started
-        let serviceId = CBUUID(nsuuid: uuid)
-        service = CBMutableService(type: serviceId, primary: true)
-        notifyChar.descriptors?.append(descriptor)
-        service!.characteristics = [notifyChar, writeChar]
-        
-        let state = peripheralManager.state
-        
-        switch state {
-        case .poweredOff:
-            callStartListener(result: Result.failure(GeotabDriveErrors.IoxBleError(error: "BLE is power off state")))
-            stop()
-        case .unauthorized:
-            callStartListener(result: Result.failure(GeotabDriveErrors.IoxBleError(error: "BLE is unauthorized")))
-            stop()
-        case .unsupported:
-            callStartListener(result: Result.failure(GeotabDriveErrors.IoxBleError(error: "BLE is unsupported")))
-            stop()
-        case .poweredOn:
-            startServiceIfNotYet()
-        default:
-            if authStateDeniedOrRestricted() {
-                callStartListener(result: Result.failure(GeotabDriveErrors.IoxBleError(error: "BLE usage is unauthorized")))
-                stop()
-            } else if authStateNotDetermined() {
-                print("Not Determined")
-            }
-        }
+        client.start(serviceId: serviceId, reconnect: reconnect)
     }
     
     func stop() {
-        queue.cancelAllOperations()
-        queue.isSuspended = true
-        peripheralManager.stopAdvertising()
-        peripheralManager.removeAllServices()
-        isConnected = false
-        isStarted = false
-        service = nil
-    }
-    
-    private func startServiceIfNotYet() {
-        guard !isStarted else {
-            callStartListener(result: Result.failure(GeotabDriveErrors.IoxBleError(error: "Another service is already started")))
-            return
-        }
-        guard let serv = service else {
-            callStartListener(result: Result.failure(GeotabDriveErrors.IoxBleError(error: "No service to be started")))
-            stop()
-            return
-        }
-        // here we are assuming only one service is going to be used
-        peripheralManager.removeAllServices()
-        peripheralManager.add(serv)
-        peripheralManager.startAdvertising([
-            CBAdvertisementDataLocalNameKey: "ioxble",
-            CBAdvertisementDataServiceUUIDsKey: [serv.uuid]
-        ])
-    }
-    
-    private func sendSyncMessage() {
-        guard !isConnected else {
-            return
-        }
-        if let central = central {
-            peripheralManager.updateValue(SyncMessage().data, for: notifyChar, onSubscribedCentrals: [central])
-        }
-        executer.after(1) {
-            self.sendSyncMessage()
-        }
-    }
-    
-    private func sendHandshakeConfirmationMessage() {
-        if let central = central {
-            peripheralManager.updateValue(HandshakeConfirmationMessage().data, for: notifyChar, onSubscribedCentrals: [central])
-        }
+        client.stop()
     }
 }
 
-extension IoxBleModule: CBPeripheralManagerDelegate {
-    private class PartialGoData {
-        var data: [UInt8] = []
-        var expectedLength: Int = -1
-        
-        func isFull() -> Bool {
-            if data.count > expectedLength {
-                data = []
-                expectedLength = -1
+extension IoxBleModule: IoxClientDelegate {
+    
+    private func initJsonEncoder() {
+        self.jsonEncoder.dataEncodingStrategy = .custom { data, encoder in
+            var container = encoder.unkeyedContainer()
+            data.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
+                bytes
+                    .map { Int8(bitPattern: $0) }
+                    .forEach { try? container.encode($0) }
             }
-            return data.count == expectedLength
         }
     }
     
-    func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
-        switch peripheral.state {
-        case .unknown:
-            break
-        case .unsupported:
-            if isStarted && startListener == nil {
-                webDriveDelegate.push(moduleEvent: ModuleEvent(event: "ioxble.error", params: "{ \"detail\": \"BLE is unsupported\" }")) { _ in }
-                ioxDeviceEventCallback?(.failure(GeotabDriveErrors.IoxBleError(error: "BLE is unsupported")))
-            }
-            callStartListener(result: Result.failure(GeotabDriveErrors.IoxBleError(error: "BLE is unsupported")))
-            stop()
-        case .unauthorized:
-            if isStarted && startListener == nil {
-                webDriveDelegate.push(moduleEvent: ModuleEvent(event: "ioxble.error", params: "{ \"detail\": \"BLE is unauthorized\" }")) { _ in }
-            }
-            ioxDeviceEventCallback?(.failure(GeotabDriveErrors.IoxBleError(error: "BLE usage is unauthorized")))
-            callStartListener(result: Result.failure(GeotabDriveErrors.IoxBleError(error: "BLE usage is unauthorized")))
-            stop()
-        case .resetting:
-            break
-        case .poweredOn:
-            startServiceIfNotYet()
-        case .poweredOff:
-            if isStarted && startListener == nil {
-                webDriveDelegate.push(moduleEvent: ModuleEvent(event: "ioxble.error", params: "{ \"detail\": \"BLE is power off state\" }")) { _ in }
-                ioxDeviceEventCallback?(.failure(GeotabDriveErrors.IoxBleError(error: "BLE is in Power off state")))
-            }
-            callStartListener(result: Result.failure(GeotabDriveErrors.IoxBleError(error: "BLE is in Power off state")))
-            stop()
-        @unknown default:
-            if isStarted && startListener == nil {
-                webDriveDelegate.push(moduleEvent: ModuleEvent(event: "ioxble.error", params: "{ \"detail\": \"Unknown error\" }")) { _ in }
-                ioxDeviceEventCallback?(.failure(GeotabDriveErrors.IoxBleError(error: "Unknown error")))
-            }
-            callStartListener(result: Result.failure(GeotabDriveErrors.IoxBleError(error: "Unknown error")))
-            stop()
+    private func updateStatePropertyScript(state: IoxClientState) -> String {
+        return """
+        if (\(Module.geotabModules) !== undefined && \(Module.geotabModules).\(name) !== undefined) {
+            window.\(Module.geotabModules).\(name).\(IoxBleModule.statePropertyName) = \(state.toJSState().rawValue);
+        }
+        """
+    }
+    
+    private func stateEventDetailJson(state: IoxClientState) -> String {
+        return """
+        { "\(IoxBleModule.statePropertyName)": \(state.toJSState().rawValue) }
+        """
+    }
+
+    private func fireEvent(name: String, detailValue: String) {
+        scriptGateway?.push(moduleEvent: ModuleEvent(event: name,
+                                                    params: "{ \"detail\": \(detailValue) }")) { _ in }
+    }
+    
+    private func fireErrorEvent(error: GeotabDriveErrors) {
+        fireEvent(name: IoxBleModule.errorEventName, detailValue: "\"\(error.localizedDescription)\"")
+        ioxDeviceEventCallback?(.failure(error))
+    }
+    
+    func clientDidUpdateState(_ client: any IoxClient, state: IoxClientState) {
+        executer.run { [weak self] in
+            guard let self = self else { return }
+            self.scriptGateway?.evaluate(script: self.updateStatePropertyScript(state: state)) { _ in }
+            self.fireEvent(name: IoxBleModule.stateEventName, detailValue: self.stateEventDetailJson(state: state))
         }
     }
     
-    func peripheralManager(_ peripheral: CBPeripheralManager, didAdd service: CBService, error: Error?) {
-        if error != nil {
-            callStartListener(result: Result.failure(GeotabDriveErrors.IoxBleError(error: "BLE failed adding the service")))
-            stop()
-            return
+    func clientDidStart(_ client: any IoxClient, error: GeotabDriveErrors?) {
+        if let error = error {
+            fireErrorEvent(error: error)
+            callStartListener(result: Result.failure(error))
+        } else {
+            callStartListener(result: Result.success("undefined"))
         }
     }
     
-    func peripheralManagerDidStartAdvertising(_ peripheral: CBPeripheralManager, error: Error?) {
-        if error != nil {
-            callStartListener(result: Result.failure(GeotabDriveErrors.IoxBleError(error: "BLE failed advertising the service")))
-            stop()
-            return
+    func clientDidStopUnexpectedly(_ client: any IoxClient, error: GeotabDriveErrors) {
+        fireErrorEvent(error: error)
+    }
+    
+    func clientDidReceiveEvent(_ client: any IoxClient, event: DeviceEvent?, error: GeotabDriveErrors?) {
+        if let error = error {
+            fireErrorEvent(error: error)
+        } else if let event = event,
+                  let eventData = try? jsonEncoder.encode(event) {
+            let deviceJson = String(decoding: eventData, as: UTF8.self)
+            fireEvent(name: IoxBleModule.deviceEventName, detailValue: deviceJson)
+            let ioxBLEDeviceEvent = IOXDeviceEvent(type: 0, deviceEvent: event)
+            ioxDeviceEventCallback?(.success(ioxBLEDeviceEvent))
+        } else {
+            fireErrorEvent(error: .IoxEventParsingError(error: "Could not decode event"))
         }
-        callStartListener(result: Result.success("undefined"))
-        isStarted = true
-        
-        // after reconnecting, we don't get didSubscribeTo again so we can assume it is already subscribed
-        if self.central != nil {
-            queue.isSuspended = false
-            sendSyncMessage()
-        }
     }
     
-    func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didSubscribeTo characteristic: CBCharacteristic) {
-        self.central = central
-        queue.isSuspended = false
-        sendSyncMessage()
+    func clientDidDisconnect(_ client: any IoxClient, error: GeotabDriveErrors?) {
     }
-    
-    func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didUnsubscribeFrom characteristic: CBCharacteristic) {
-        isConnected = false // setting isConnected off will start handshake sync messages again after a new subscription
-        self.central = nil
-    }
-    
-    func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveWrite requests: [CBATTRequest]) {
-        for req in requests {
-            guard let data = req.value, req.characteristic == writeChar, req.central == central else {
-                continue
-            }
-            
-            let operation = BlockOperation()
-            let byteArray = [UInt8](data)
-            operation.addExecutionBlock {
-                guard byteArray.count > 0 else {
-                    return
-                }
-                
-                if byteArray == Messages.handshake {
-                    self.sendHandshakeConfirmationMessage()
-                    return
-                }
-                
-                if byteArray == Messages.ack {
-                    self.isConnected = true
-                    return
-                }
-                
-                if isGoDeviceData(byteArray) {
-                    self.partialGoData = PartialGoData()
-                    self.partialGoData.expectedLength = Int(byteArray[2]) + 6
-                }
-                self.partialGoData.data.append(contentsOf: byteArray)
-                
-                guard self.partialGoData.isFull() else {
-                    return
-                }
-                
-                do {
-                    let message = try GoDeviceDataMessage(bytes: self.partialGoData.data)
-                    let event = try self.transformer.transform(byteArray: Data(message.payload))
-                    let deviceJson = String(data: try JSONEncoder().encode(event), encoding: .utf8)!
-                    self.executer.run {
-                        self.webDriveDelegate.push(moduleEvent: ModuleEvent(event: "ioxble.godevicedata", params: "{ \"detail\": \(deviceJson) }")) { _ in }
-                        let ioxBLEDeviceEvent = IOXDeviceEvent(type: 0, deviceEvent: event)
-                        self.ioxDeviceEventCallback?(.success(ioxBLEDeviceEvent))
-                    }
-                } catch {
-                    self.executer.run {
-                        self.webDriveDelegate.push(moduleEvent: ModuleEvent(event: "ioxble.error", params: "{ \"detail\": \"\(error.localizedDescription)\" }")) { _ in }
-                        self.ioxDeviceEventCallback?(.failure(error))
-                    }
-                }
-            }
-            
-            queue.addOperation(operation)
+}
+
+extension IoxClientState {
+    func toJSState() -> IoxBleModule.State {
+        switch self {
+        case .idle:
+            return .idle
+        case .advertising:
+            return .advertising
+        case .syncing:
+            return .syncing
+        case .handshaking:
+            return .handshaking
+        case .connected:
+            return .connected
         }
     }
 }

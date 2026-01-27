@@ -1,14 +1,15 @@
 import UIKit
 
 class GetAllFunction: ModuleFunction {
-    private let module: LocalNotificationModule
+    private static let functionName: String = "getAll"
+    private weak var module: LocalNotificationModule?
     
     init(module: LocalNotificationModule) {
         self.module = module
-        super.init(module: module, name: "getAll")
+        super.init(module: module, name: Self.functionName)
     }
     
-    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, Error>) -> Void) {
+    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, any Error>) -> Void) {
         getAll { result in
             guard let json = toJson(result) else {
                 jsCallback(Result.success("[]"))
@@ -19,25 +20,13 @@ class GetAllFunction: ModuleFunction {
     }
     
     func getAll(_ result: @escaping ([NativeNotify]) -> Void) {
-        let center = UNUserNotificationCenter.current()
         var notifications: [NativeNotify] = []
-        center.getDeliveredNotifications { nts in
-            notifications += nts.compactMap { self.transformToNativeNotify(content: $0.request.content) }
-            center.getPendingNotificationRequests { reqs in
-                notifications += reqs.compactMap { self.transformToNativeNotify(content: $0.content) }
+        module?.notificationAdapter?.getDelivered { [weak self] nts in
+            notifications += nts
+            self?.module?.notificationAdapter?.getPendingRequests { reqs in
+                notifications += reqs
                 result(notifications)
             }
         }
     }
-    
-    func transformToNativeNotify(content: UNNotificationContent) -> NativeNotify? {
-        guard let nativeNotifyData = content.userInfo["nativeNotify"] as? Data else {
-            return nil
-        }
-        guard let nativeNotify = try? JSONDecoder().decode(NativeNotify.self, from: nativeNotifyData) else {
-            return nil
-        }
-        return nativeNotify
-    }
-    
 }

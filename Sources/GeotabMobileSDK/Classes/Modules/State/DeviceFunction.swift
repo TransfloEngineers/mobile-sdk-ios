@@ -1,22 +1,18 @@
 import WebKit
 
 class DeviceFunction: ModuleFunction {
-    private let module: StateModule
-    var callbacks: [String: (Result<String, Error>) -> Void] = [:]
-    init(module: StateModule) {
-        self.module = module
-        super.init(module: module, name: "device")
+    private static let functionName: String = "device"
+    private weak var scriptGateway: (any ScriptGateway)?
+    var callbacks: [String: (Result<String, any Error>) -> Void] = [:]
+    
+    init(module: StateModule, scriptGateway: any ScriptGateway) {
+        self.scriptGateway = scriptGateway
+        super.init(module: module, name: Self.functionName)
     }
     
-    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, Error>) -> Void) {
-        guard argument != nil, JSONSerialization.isValidJSONObject(argument!), let data = try? JSONSerialization.data(withJSONObject: argument!) else {
-            jsCallback(Result.failure(GeotabDriveErrors.ModuleFunctionArgumentError))
-            return
-        }
-        guard let arg = try? JSONDecoder().decode(DriveApiFunctionArgument.self, from: data) else {
-            jsCallback(Result.failure(GeotabDriveErrors.ModuleFunctionArgumentError))
-            return
-        }
+    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, any Error>) -> Void) {
+        guard let arg = validateAndDecodeJSONObject(argument: argument, jsCallback: jsCallback, decodeType: DriveApiFunctionArgument.self) else { return }
+        
         guard let callback = callbacks[arg.callerId] else {
             jsCallback(Result.failure(GeotabDriveErrors.InvalidCallError))
             return
@@ -28,8 +24,8 @@ class DeviceFunction: ModuleFunction {
             return
         }
         guard let state = arg.result else {
-            callback(Result.failure(GeotabDriveErrors.JsIssuedError(error: "No DeviceState returned")))
-            jsCallback(Result.failure(GeotabDriveErrors.JsIssuedError(error: "No DeviceState returned")))
+            callback(Result.failure(GeotabDriveErrors.JsIssuedError(error: StateError.noStateReturned.rawValue)))
+            jsCallback(Result.failure(GeotabDriveErrors.JsIssuedError(error: StateError.noStateReturned.rawValue)))
             callbacks[arg.callerId] = nil
             return
         }
@@ -38,19 +34,19 @@ class DeviceFunction: ModuleFunction {
         jsCallback(Result.success("undefined"))
     }
     
-    func call(_ callback: @escaping (Result<String, Error>) -> Void) {
+    func call(_ callback: @escaping (Result<String, any Error>) -> Void) {
         let callerId = UUID().uuidString
         self.callbacks[callerId] = callback
         
-        let script = apiCallScript(templateRepo: Module.templateRepo, template: "ModuleFunction.DeviceState.Api", scriptData: ["moduleName": module.name, "functionName": name, "callerId": callerId])
-        module.webDriveDelegate.evaluate(script: script) { result in
+        let script = apiCallScript(templateRepo: Module.templateRepo, template: "ModuleFunction.DeviceState.Api", scriptData: ["moduleName": moduleName, "functionName": name, "callerId": callerId])
+        scriptGateway?.evaluate(script: script) { result in
             switch result {
             case .success: return
             case .failure:
                 if self.callbacks[callerId] == nil {
                     return
                 }
-                callback(Result.failure(GeotabDriveErrors.JsIssuedError(error: "Evaluating JS failed")))
+                callback(Result.failure(GeotabDriveErrors.JsIssuedError(error: UserError.jsEvalFailed.rawValue)))
                 self.callbacks[callerId] = nil
             }
         }

@@ -6,23 +6,17 @@ struct DriverActionNecessaryArgument: Codable {
 }
 
 class DriverActionNecessaryFunction: ModuleFunction {
-    private let module: UserModule
+    private static let functionName: String = "driverActionNecessary"
+    private weak var module: UserModule?
     init(module: UserModule) {
         self.module = module
-        super.init(module: module, name: "driverActionNecessary")
+        super.init(module: module, name: Self.functionName)
     }
     
-    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, Error>) -> Void) {
-        guard argument != nil, JSONSerialization.isValidJSONObject(argument!), let data = try? JSONSerialization.data(withJSONObject: argument!) else {
-            jsCallback(Result.failure(GeotabDriveErrors.ModuleFunctionArgumentError))
-            return
-        }
-        guard let arg = try? JSONDecoder().decode(DriverActionNecessaryArgument.self, from: data) else {
-            jsCallback(Result.failure(GeotabDriveErrors.ModuleFunctionArgumentError))
-            return
-        }
-        DispatchQueue.main.async {
-            self.module.driverActionNecessaryCallback?(arg.isDriverActionNecessary, arg.driverActionType)
+    override func handleJavascriptCall(argument: Any?, jsCallback: @escaping (Result<String, any Error>) -> Void) {
+        guard let arg = validateAndDecodeJSONObject(argument: argument, jsCallback: jsCallback, decodeType: DriverActionNecessaryArgument.self) else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.module?.driverActionNecessaryCallback?(arg.isDriverActionNecessary, arg.driverActionType)
         }
         jsCallback(Result.success("undefined"))
     }

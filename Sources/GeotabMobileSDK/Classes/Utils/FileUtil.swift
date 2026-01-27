@@ -1,11 +1,20 @@
 import Foundation
 
+private enum FileUtilError: String {
+    case invalidFilePath = "Invalid file path: "
+    case invalidSourcePath = "Invalid source path: "
+    case invalidDestPath = "Invalid destination path: "
+    case invalidDirPath = "Invalid directory path: "
+    case fileDoesNotExist = "File doesn't exist: "
+    case pathIsDirectoryError = "Given path is a directory: "
+}
+
 func fileExist(fsPrefix: String, drvfsDir: URL, path: String) throws -> Bool {
-    guard path.hasPrefix(FileSystemModule.fsPrefix) && !path.hasSuffix("/") else {
-        throw GeotabDriveErrors.FileException(error: "Invalid file path")
+    guard path.hasPrefix(FilesystemAccessHelper.fsPrefix) && !path.hasSuffix("/") else {
+        throw GeotabDriveErrors.FileException(error: FileUtilError.invalidFilePath.rawValue)
     }
 
-    let relativeFilePath = path[ path.index(path.startIndex, offsetBy: FileSystemModule.fsPrefix.count)..<path.endIndex].trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    let relativeFilePath = path[ path.index(path.startIndex, offsetBy: FilesystemAccessHelper.fsPrefix.count)..<path.endIndex].trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     
     let fm = FileManager.default
     
@@ -15,11 +24,11 @@ func fileExist(fsPrefix: String, drvfsDir: URL, path: String) throws -> Bool {
 }
 
 func writeFile(fsPrefix: String, drvfsDir: URL, path: String, data: Data, offset: UInt64?) throws -> UInt64 {
-    guard path.hasPrefix(FileSystemModule.fsPrefix) && !path.hasSuffix("/") else {
-        throw GeotabDriveErrors.FileException(error: "Invalid file path")
+    guard path.hasPrefix(FilesystemAccessHelper.fsPrefix) && !path.hasSuffix("/") else {
+        throw GeotabDriveErrors.FileException(error: FileUtilError.invalidFilePath.rawValue + path)
     }
 
-    let relativeFilePath = path[ path.index(path.startIndex, offsetBy: FileSystemModule.fsPrefix.count)..<path.endIndex].trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    let relativeFilePath = path[ path.index(path.startIndex, offsetBy: FilesystemAccessHelper.fsPrefix.count)..<path.endIndex].trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     
     var fileName = relativeFilePath
     if let idx = relativeFilePath.lastIndex(of: "/") {
@@ -30,7 +39,7 @@ func writeFile(fsPrefix: String, drvfsDir: URL, path: String, data: Data, offset
     let folderUrl = URL(fileURLWithPath: relativeFolderPath, relativeTo: drvfsDir)
     
     guard folderUrl.path.hasPrefix(drvfsDir.path) else {
-        throw GeotabDriveErrors.FileException(error: "Invalid path: \(path)")
+        throw GeotabDriveErrors.FileException(error: FileUtilError.invalidFilePath.rawValue + path)
     }
     
     let fm = FileManager.default
@@ -56,11 +65,21 @@ func writeFile(fsPrefix: String, drvfsDir: URL, path: String, data: Data, offset
     }
     
     if let offset = offset {
-        fileHandle.seek(toFileOffset: offset)
+        do {
+            try fileHandle.seek(toOffset: offset)
+        } catch {
+            throw GeotabDriveErrors.FileException(error: "Failed to seek to offset")
+        }
     } else {
         fileHandle.seekToEndOfFile()
     }
-    fileHandle.write(data)
+    
+    do {
+        try fileHandle.write(contentsOf: data)
+    } catch {
+        throw GeotabDriveErrors.FileException(error: "Failed to write")
+    }
+    
     fileHandle.seekToEndOfFile()
     let size = fileHandle.offsetInFile
     fileHandle.closeFile()
@@ -68,29 +87,33 @@ func writeFile(fsPrefix: String, drvfsDir: URL, path: String, data: Data, offset
 }
 
 func readFile(fsPrefix: String, drvfsDir: URL, path: String, offset: UInt64, size: UInt64? = nil) throws -> Data {
-    guard path.hasPrefix(FileSystemModule.fsPrefix) && !path.hasSuffix("/") else {
-        throw GeotabDriveErrors.FileException(error: "Invalid file path \(path)")
+    guard path.hasPrefix(FilesystemAccessHelper.fsPrefix) && !path.hasSuffix("/") else {
+        throw GeotabDriveErrors.FileException(error: FileUtilError.invalidFilePath.rawValue + ": \(path)")
     }
     
-    let relativeFilePath = path[ path.index(path.startIndex, offsetBy: FileSystemModule.fsPrefix.count)..<path.endIndex].trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    let relativeFilePath = path[ path.index(path.startIndex, offsetBy: FilesystemAccessHelper.fsPrefix.count)..<path.endIndex].trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     
     let fm = FileManager.default
     let url = URL(fileURLWithPath: String(relativeFilePath), relativeTo: drvfsDir)
     
     guard url.path.hasPrefix(drvfsDir.path) else {
-        throw GeotabDriveErrors.FileException(error: "Invalid path: \(path)")
+        throw GeotabDriveErrors.FileException(error: FileUtilError.invalidFilePath.rawValue + path)
     }
     
     if !fm.fileExists(atPath: url.path) {
-        throw GeotabDriveErrors.FileException(error: "File doesn't exist \(path)")
+        throw GeotabDriveErrors.FileException(error: FileUtilError.fileDoesNotExist.rawValue + path)
     }
     
     guard let fileHandle = try? FileHandle(forReadingFrom: url) else {
         throw GeotabDriveErrors.FileException(error: "Failed opening file for reading")
     }
     
-    fileHandle.seek(toFileOffset: offset)
-    
+    do {
+        try fileHandle.seek(toOffset: offset)
+    } catch {
+        throw GeotabDriveErrors.FileException(error: "Failed to seek writing")
+    }
+
     let data: Data!
     if let sz = size {
         if sz > Int.max {
@@ -105,21 +128,21 @@ func readFile(fsPrefix: String, drvfsDir: URL, path: String, offset: UInt64, siz
 }
 
 func readFileAsText(fsPrefix: String, drvfsDir: URL, path: String) throws -> String {
-    guard path.hasPrefix(FileSystemModule.fsPrefix) && !path.hasSuffix("/") else {
-        throw GeotabDriveErrors.FileException(error: "Invalid file path \(path)")
+    guard path.hasPrefix(FilesystemAccessHelper.fsPrefix) && !path.hasSuffix("/") else {
+        throw GeotabDriveErrors.FileException(error: FileUtilError.invalidFilePath.rawValue + path)
     }
     
-    let relativeFilePath = path[ path.index(path.startIndex, offsetBy: FileSystemModule.fsPrefix.count)..<path.endIndex].trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    let relativeFilePath = path[ path.index(path.startIndex, offsetBy: FilesystemAccessHelper.fsPrefix.count)..<path.endIndex].trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     
     let fm = FileManager.default
     let url = URL(fileURLWithPath: String(relativeFilePath), relativeTo: drvfsDir)
     
     guard url.path.hasPrefix(drvfsDir.path) else {
-        throw GeotabDriveErrors.FileException(error: "Invalid path: \(path)")
+        throw GeotabDriveErrors.FileException(error: FileUtilError.invalidFilePath.rawValue + path)
     }
     
     if !fm.fileExists(atPath: url.path) {
-        throw GeotabDriveErrors.FileException(error: "File doesn't exist \(path)")
+        throw GeotabDriveErrors.FileException(error: FileUtilError.fileDoesNotExist.rawValue + path)
     }
     
     let content = try String(contentsOfFile: url.path, encoding: .utf8)
@@ -127,7 +150,7 @@ func readFileAsText(fsPrefix: String, drvfsDir: URL, path: String) throws -> Str
     
     do {
         let json: Data = try JSONSerialization.data(withJSONObject: array, options: [])
-        var data: String = String(data: json, encoding: .utf8)!
+        var data = String(decoding: json, as: UTF8.self)
         data = String(data.dropFirst().dropLast())
         return data
     } catch {
@@ -139,26 +162,26 @@ func deleteFile(fsPrefix: String, drvfsDir: URL, path: String) throws {
     
     var resultStorage: ObjCBool = false
     
-    guard path.hasPrefix(FileSystemModule.fsPrefix) && !path.hasSuffix("/") else {
-        throw GeotabDriveErrors.FileException(error: "Invalid file path \(path)")
+    guard path.hasPrefix(FilesystemAccessHelper.fsPrefix) && !path.hasSuffix("/") else {
+        throw GeotabDriveErrors.FileException(error: FileUtilError.invalidFilePath.rawValue + path)
     }
     
-    let relativeFilePath = path[ path.index(path.startIndex, offsetBy: FileSystemModule.fsPrefix.count)..<path.endIndex].trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    let relativeFilePath = path[ path.index(path.startIndex, offsetBy: FilesystemAccessHelper.fsPrefix.count)..<path.endIndex].trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     
     let fm = FileManager.default
     let url = URL(fileURLWithPath: String(relativeFilePath), relativeTo: drvfsDir)
     guard url.path.hasPrefix(drvfsDir.path) else {
-        throw GeotabDriveErrors.FileException(error: "Invalid path: \(path)")
+        throw GeotabDriveErrors.FileException(error: FileUtilError.invalidFilePath.rawValue + path)
     }
     
     if !fm.fileExists(atPath: url.path, isDirectory: &resultStorage) {
-        throw GeotabDriveErrors.FileException(error: "File doesn't exist \(path)")
+        throw GeotabDriveErrors.FileException(error: FileUtilError.fileDoesNotExist.rawValue + path)
     }
     
     let isDir = resultStorage.boolValue
     
     if isDir {
-        throw GeotabDriveErrors.FileException(error: "Given path is a directory")
+        throw GeotabDriveErrors.FileException(error: FileUtilError.pathIsDirectoryError.rawValue + path)
     }
     
     do {
@@ -174,17 +197,17 @@ func getFileInfo(fsPrefix: String, drvfsDir: URL, path: String) throws -> FileIn
     
     let dateFormatter = ISO8601DateFormatter()
     
-    guard path.hasPrefix(FileSystemModule.fsPrefix) else {
-        throw GeotabDriveErrors.FileException(error: "Invalid file path: \(path)")
+    guard path.hasPrefix(FilesystemAccessHelper.fsPrefix) else {
+        throw GeotabDriveErrors.FileException(error: FileUtilError.invalidFilePath.rawValue + path)
     }
     
-    let relativeFolderPath = path[ path.index(path.startIndex, offsetBy: FileSystemModule.fsPrefix.count)..<path.endIndex].trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    let relativeFolderPath = path[ path.index(path.startIndex, offsetBy: FilesystemAccessHelper.fsPrefix.count)..<path.endIndex].trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     
     let fm = FileManager.default
     let url = URL(fileURLWithPath: String(relativeFolderPath), relativeTo: drvfsDir)
     
     guard url.path.hasPrefix(drvfsDir.path) else {
-        throw GeotabDriveErrors.FileException(error: "Invalid path: \(path)")
+        throw GeotabDriveErrors.FileException(error: FileUtilError.invalidFilePath.rawValue + path)
     }
     
     var fileName = "" // default empty name if path is pointing to root folder
@@ -193,7 +216,7 @@ func getFileInfo(fsPrefix: String, drvfsDir: URL, path: String) throws -> FileIn
     }
     
     if !fm.fileExists(atPath: url.path, isDirectory: &resultStorage) {
-        throw GeotabDriveErrors.FileException(error: "File doesn't exist: \(path)")
+        throw GeotabDriveErrors.FileException(error: FileUtilError.fileDoesNotExist.rawValue)
     }
     let attr = try fm.attributesOfItem(atPath: "\(url.path)")
     guard let modifiedDate = attr[FileAttributeKey.modificationDate] as? Date,
@@ -208,15 +231,15 @@ func getFileInfo(fsPrefix: String, drvfsDir: URL, path: String) throws -> FileIn
 func listFile(fsPrefix: String, drvfsDir: URL, path: String) throws -> [FileInfo] {
     
     var resultStorage: ObjCBool = false
-    var result = [FileInfo]()
+    var result: [FileInfo] = []
     
     let dateFormatter = ISO8601DateFormatter()
     
-    guard path.hasPrefix(FileSystemModule.fsPrefix) else {
-        throw GeotabDriveErrors.FileException(error: "Invalid directory path \(path)")
+    guard path.hasPrefix(FilesystemAccessHelper.fsPrefix) else {
+        throw GeotabDriveErrors.FileException(error: FileUtilError.invalidDirPath.rawValue + path)
     }
     
-    let relativeDirectoryPath = path[ path.index(path.startIndex, offsetBy: FileSystemModule.fsPrefix.count)..<path.endIndex].trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    let relativeDirectoryPath = path[ path.index(path.startIndex, offsetBy: FilesystemAccessHelper.fsPrefix.count)..<path.endIndex].trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     
     let fm = FileManager.default
     
@@ -231,16 +254,15 @@ func listFile(fsPrefix: String, drvfsDir: URL, path: String) throws -> [FileInfo
     let url = URL(fileURLWithPath: String(relativeDirectoryPath), relativeTo: drvfsDir)
     
     guard url.path.hasPrefix(drvfsDir.path) else {
-        throw GeotabDriveErrors.FileException(error: "Invalid path: \(path)")
+        throw GeotabDriveErrors.FileException(error: FileUtilError.invalidFilePath.rawValue + path)
     }
     
     if !fm.fileExists(atPath: url.path, isDirectory: &resultStorage) || !resultStorage.boolValue {
-            throw GeotabDriveErrors.FileException(error: "Invalid directory path \(path)")
+        throw GeotabDriveErrors.FileException(error: FileUtilError.invalidDirPath.rawValue + path)
     }
     
     do {
         let items = try fm.contentsOfDirectory(atPath: url.path)
-        
         for item in items where fm.fileExists(atPath: "\(url.path)/\(item)", isDirectory: &resultStorage) {
             let attr = try fm.attributesOfItem(atPath: "\(url.path)/\(item)")
             guard let modifiedDate = attr[FileAttributeKey.modificationDate] as? Date else {
@@ -263,11 +285,11 @@ func deleteFolder(fsPrefix: String, drvfsDir: URL, path: String) throws {
     
     var resultStorage: ObjCBool = false
     
-    guard path.hasPrefix(FileSystemModule.fsPrefix) else {
-        throw GeotabDriveErrors.FileException(error: "Invalid folder path \(path)")
+    guard path.hasPrefix(FilesystemAccessHelper.fsPrefix) else {
+        throw GeotabDriveErrors.FileException(error: FileUtilError.invalidDirPath.rawValue + path)
     }
     
-    let relativeFilePath = path[ path.index(path.startIndex, offsetBy: FileSystemModule.fsPrefix.count)..<path.endIndex].trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    let relativeFilePath = path[ path.index(path.startIndex, offsetBy: FilesystemAccessHelper.fsPrefix.count)..<path.endIndex].trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     
     let fm = FileManager.default
     let url = URL(fileURLWithPath: String(relativeFilePath), relativeTo: drvfsDir)
@@ -276,7 +298,7 @@ func deleteFolder(fsPrefix: String, drvfsDir: URL, path: String) throws {
     }
     
     guard url.path.hasPrefix(drvfsDir.path) else {
-        throw GeotabDriveErrors.FileException(error: "Invalid path: \(path)")
+        throw GeotabDriveErrors.FileException(error: FileUtilError.invalidFilePath.rawValue + path)
     }
     
     if !fm.fileExists(atPath: url.path, isDirectory: &resultStorage) {
@@ -312,31 +334,31 @@ func deleteFolder(fsPrefix: String, drvfsDir: URL, path: String) throws {
 func moveFile(fsPrefix: String, drvfsDir: URL, srcPath: String, dstPath: String, overwrite: Bool = false) throws {
     var resultStorage: ObjCBool = false
     
-    guard srcPath.hasPrefix(FileSystemModule.fsPrefix) && !srcPath.hasSuffix("/") else {
-        throw GeotabDriveErrors.FileException(error: "Invalid source path \(srcPath)")
+    guard srcPath.hasPrefix(FilesystemAccessHelper.fsPrefix) && !srcPath.hasSuffix("/") else {
+        throw GeotabDriveErrors.FileException(error: FileUtilError.invalidSourcePath.rawValue + srcPath)
     }
     
-    guard dstPath.hasPrefix(FileSystemModule.fsPrefix) && !dstPath.hasSuffix("/") else {
-        throw GeotabDriveErrors.FileException(error: "Invalid destination path \(dstPath)")
+    guard dstPath.hasPrefix(FilesystemAccessHelper.fsPrefix) && !dstPath.hasSuffix("/") else {
+        throw GeotabDriveErrors.FileException(error: FileUtilError.invalidDestPath.rawValue + dstPath)
     }
     
-    let relativeSrcPath = srcPath[ srcPath.index(srcPath.startIndex, offsetBy: FileSystemModule.fsPrefix.count)..<srcPath.endIndex].trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-    let relativeDestPath = dstPath[ dstPath.index(srcPath.startIndex, offsetBy: FileSystemModule.fsPrefix.count)..<dstPath.endIndex].trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    let relativeSrcPath = srcPath[ srcPath.index(srcPath.startIndex, offsetBy: FilesystemAccessHelper.fsPrefix.count)..<srcPath.endIndex].trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    let relativeDestPath = dstPath[ dstPath.index(srcPath.startIndex, offsetBy: FilesystemAccessHelper.fsPrefix.count)..<dstPath.endIndex].trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     
     let fm = FileManager.default
     let srcUrl = URL(fileURLWithPath: String(relativeSrcPath), relativeTo: drvfsDir)
     let destUrl = URL(fileURLWithPath: String(relativeDestPath), relativeTo: drvfsDir)
     
     guard srcUrl.path.hasPrefix(drvfsDir.path) else {
-        throw GeotabDriveErrors.FileException(error: "Invalid path: \(srcPath)")
+        throw GeotabDriveErrors.FileException(error: FileUtilError.invalidSourcePath.rawValue + srcPath)
     }
     
     guard destUrl.path.hasPrefix(drvfsDir.path) else {
-        throw GeotabDriveErrors.FileException(error: "Invalid path: \(dstPath)")
+        throw GeotabDriveErrors.FileException(error: FileUtilError.invalidDestPath.rawValue + dstPath)
     }
     
     if !fm.fileExists(atPath: srcUrl.path, isDirectory: &resultStorage) {
-        throw GeotabDriveErrors.FileException(error: "File doesn't exist \(srcPath)")
+        throw GeotabDriveErrors.FileException(error: FileUtilError.fileDoesNotExist.rawValue + srcPath)
     }
     
     if !overwrite && fm.fileExists(atPath: destUrl.path) {
@@ -346,7 +368,7 @@ func moveFile(fsPrefix: String, drvfsDir: URL, srcPath: String, dstPath: String,
     let isDir = resultStorage.boolValue
     
     if isDir {
-        throw GeotabDriveErrors.FileException(error: "Given path is a directory")
+        throw GeotabDriveErrors.FileException(error: FileUtilError.pathIsDirectoryError.rawValue)
     }
     
     if destUrl.path == srcUrl.path && overwrite {

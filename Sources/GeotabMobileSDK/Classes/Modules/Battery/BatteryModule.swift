@@ -1,36 +1,38 @@
 import UIKit
 
 protocol DeviceBatteryStateAdapter: AnyObject {
-
     var isBatteryMonitoringEnabled: Bool { get set }
-
     var batteryState: UIDevice.BatteryState { get }
-
     var batteryLevel: Float { get }
 }
 
 class BatteryModule: Module {
-    private let adapter: DeviceBatteryStateAdapter
-    private let webDriveDelegate: WebDriveDelegate
+    static let moduleName = "battery"
+
+    private weak var adapter: (any DeviceBatteryStateAdapter)?
+    private weak var scriptGateway: (any ScriptGateway)?
     var started: Bool {
+        guard let adapter else { return false }
         return adapter.isBatteryMonitoringEnabled
     }
     var isCharging = false
     var batteryLevel = 0
-    init(webDriveDelegate: WebDriveDelegate, adapter: DeviceBatteryStateAdapter = UIDevice.current) {
-        self.webDriveDelegate = webDriveDelegate
+    init(scriptGateway: any ScriptGateway, adapter: any DeviceBatteryStateAdapter = UIDevice.current) {
+        self.scriptGateway = scriptGateway
         self.adapter = adapter
-        super.init(name: "battery")
+        super.init(name: BatteryModule.moduleName)
         monitorBatteryStatus()
         updateState()
     }
     func monitorBatteryStatus() {
+        guard let adapter else { return }
         adapter.isBatteryMonitoringEnabled = true
         NotificationCenter.default.addObserver(self, selector: #selector(self.batteryStatusDidChange), name: UIDevice.batteryStateDidChangeNotification, object: UIDevice.current)
         NotificationCenter.default.addObserver(self, selector: #selector(self.batteryStatusDidChange), name: UIDevice.batteryLevelDidChangeNotification, object: UIDevice.current)
     }
     
     func updateState() {
+        guard let adapter else { return }
         switch adapter.batteryState {
         case .full, .charging:
             isCharging = true
@@ -47,8 +49,9 @@ class BatteryModule: Module {
     }
 
     @objc private func batteryStatusDidChange(notification: NSNotification) {
+        guard let scriptGateway else { return }
         updateState()
-        webDriveDelegate.push(moduleEvent: ModuleEvent(event: "batterystatus", params: "{ \"detail\": { \"isPlugged\": \(isCharging), \"level\": \(batteryLevel) } }")) { _ in }
+        scriptGateway.push(moduleEvent: ModuleEvent(event: "batterystatus", params: "{ \"detail\": { \"isPlugged\": \(isCharging), \"level\": \(batteryLevel) } }")) { _ in }
     }
 }
 
