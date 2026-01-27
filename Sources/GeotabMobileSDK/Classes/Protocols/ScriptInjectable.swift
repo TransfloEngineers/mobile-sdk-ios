@@ -1,12 +1,11 @@
 //
 //  ScriptInjectable.swift
-//  
+//  GeotabMobileSDK
 //
-//  Created by vlad.paianu on 02.08.2023.
+//  Created by Abdelrhman Eliwa on 18/12/2025.
 //
 
-import Foundation
-import WebKit
+public import WebKit
 
 public protocol ScriptInjectable {
     var source: String { get }
