@@ -34,11 +34,6 @@ struct AuthErrorResponse: Codable {
             self.requiresReauthentication = nil
             self.underlyingError = nil
 
-        case .invalidRedirectScheme(let schemeKey):
-            self.username = nil
-            self.requiresReauthentication = nil
-            self.underlyingError = "Missing key: \(schemeKey)"
-
         case .unexpectedError(let description, let error):
             self.username = nil
             self.requiresReauthentication = nil
@@ -57,6 +52,21 @@ struct AuthErrorResponse: Codable {
             self.username = nil
             self.requiresReauthentication = nil
             self.underlyingError = "HTTP \(statusCode)"
+
+        case .oidGeneralError(_, let error):
+            self.username = nil
+            self.requiresReauthentication = nil
+            self.underlyingError = error.localizedDescription
+
+        case .oauthAuthorizationError(let code, let description):
+            self.username = nil
+            self.requiresReauthentication = nil
+            self.underlyingError = "Code \(code): \(description)"
+
+        case .oauthTokenError(let code, let description):
+            self.username = nil
+            self.requiresReauthentication = nil
+            self.underlyingError = "Code \(code): \(description)"
 
         default:
             self.username = nil

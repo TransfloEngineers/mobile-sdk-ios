@@ -133,8 +133,11 @@ actor AuthStateUpdater: AuthStateUpdating {
                         self.logDebug("Successfully refreshed token for \(account)")
                         await self.resetRetryAttempts(for: account)
                     } catch {
-                        
-                        if !AuthError.isExpectedError(error) {
+                        // Always log the error for debugging
+                        self.logDebug("Failed to refresh token for \(account)", error: error)
+
+                        // Capture unexpected errors in Sentry
+                        if AuthError.shouldBeCaptured(error) {
                             await Logger.shared.authFailure(
                                 username: account,
                                 flowType: .backgroundRefresh,
@@ -189,7 +192,11 @@ actor AuthStateUpdater: AuthStateUpdating {
                 self.logDebug("Retry successful for \(username)")
                 await self.resetRetryAttempts(for: username)
             } catch {
-                if !AuthError.isExpectedError(error) {
+                // Always log the error for debugging
+                self.logDebug("Retry failed for \(username) (attempt \(currentAttempt + 1))", error: error)
+
+                // Capture unexpected errors in Sentry
+                if AuthError.shouldBeCaptured(error) {
                     await Logger.shared.authFailure(
                         username: username,
                         flowType: .backgroundRefreshRetry,

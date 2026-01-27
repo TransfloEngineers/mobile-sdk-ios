@@ -551,12 +551,9 @@ declare namespace geotabModules {
     namespace auth {
         interface AuthError extends Error {
             code:
-                | 'SESSION_PARSE_FAILED'
-                | 'SESSION_RETRIEVE_FAILED'
                 | 'UNEXPECTED_ERROR'
                 | 'NO_DATA_FOUND'
-                | 'INVALID_URL'
-                | 'INVALID_REDIRECT_SCHEME'
+                | 'MODULE_FUNCTION_ARGUMENT_ERROR'
                 | 'FAILED_TO_SAVE_AUTH_STATE'
                 | 'USERNAME_MISMATCH'
                 | 'NO_ACCESS_TOKEN_FOUND'
@@ -568,7 +565,10 @@ declare namespace geotabModules {
                 | 'REVOKE_TOKEN_FAILED'
                 | 'UNEXPECTED_RESPONSE'
                 | 'NETWORK_ERROR'
-                | 'USER_CANCELLED';
+                | 'USER_CANCELLED'
+                | 'OID_GENERAL_ERROR'
+                | 'OAUTH_AUTHORIZATION_ERROR'
+                | 'OAUTH_TOKEN_ERROR';
             message: string;
             recoverable: boolean;
             requiresReauthentication?: boolean;
@@ -614,8 +614,7 @@ declare namespace geotabModules {
         * });
         *
         * Common error codes:
-        * - INVALID_URL: Discovery URI is not HTTPS
-        * - INVALID_REDIRECT_SCHEME: Redirect scheme not configured
+        * - MODULE_FUNCTION_ARGUMENT_ERROR: For Missing Username, ClientID, DiscoveryURL, Redirectscheme and Invalid DiscoveryURL
         * - NO_DATA_FOUND: OAuth discovery or authorization failed
         * - NO_EXTERNAL_USER_AGENT: Cannot create OAuth UI
         * - USER_CANCELLED: User cancelled login (recoverable)

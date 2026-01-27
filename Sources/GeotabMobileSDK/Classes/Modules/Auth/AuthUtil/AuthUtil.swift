@@ -13,6 +13,17 @@ class DefaultApplicationStateProvider: ApplicationStateProviding {
     }
 }
 
+// MARK: - View Presenter Provider
+protocol ViewPresenterProviding {
+    @MainActor func viewPresenter() async throws -> UIViewController
+}
+
+class DefaultViewPresenterProvider: ViewPresenterProviding {
+    @MainActor func viewPresenter() async throws -> UIViewController {
+        try await UIApplication.shared.waitForValidPresenter()
+    }
+}
+
 // MARK: - Protocol
 protocol AuthUtil {
     func login(clientId: String, discoveryUri: URL, username: String, redirectUri: URL, ephemeralSession: Bool) async throws -> AuthTokens
@@ -24,6 +35,7 @@ protocol AuthUtil {
 
     // temporary for LoginModule
     var returnAllTokensOnLogin: Bool { get set }
+    var skipTokenPersistence: Bool { get set }
 }
 
 // MARK: - Static Keys
@@ -213,21 +225,25 @@ actor AuthorizationCoordinator {
 
 final class DefaultAuthUtil: AuthUtil {
     var returnAllTokensOnLogin: Bool = false
+    var skipTokenPersistence: Bool = false
     var currentAuthorizationFlow: (any OIDExternalUserAgentSession)?
     private let appAuthService: any AppAuthService
     private let authStateKeychainManager: any AuthKeychainManaging
     private let authCoordinator = AuthorizationCoordinator()
-    private let applicationStateProvider: (any ApplicationStateProviding)
+    private let applicationStateProvider: any ApplicationStateProviding
+    private let viewPresenterProvider: any ViewPresenterProviding
 
     @TaggedLogger("AuthUtil")
     private var logger
 
     init(appAuthService: any AppAuthService = DefaultAppAuthService(),
-             authStateKeychainManager: (any AuthKeychainManaging) = AuthKeychainManager(keychainService: DefaultKeychainService()),
-             applicationStateProvider: (any ApplicationStateProviding)? = nil) {
-            self.appAuthService = appAuthService
-            self.authStateKeychainManager = authStateKeychainManager
-            self.applicationStateProvider = applicationStateProvider ?? DefaultApplicationStateProvider()
+         authStateKeychainManager: any AuthKeychainManaging = AuthKeychainManager(keychainService: DefaultKeychainService()),
+         applicationStateProvider: (any ApplicationStateProviding)? = nil,
+         viewPresenterProvider: (any ViewPresenterProviding)? = nil) {
+        self.appAuthService = appAuthService
+        self.authStateKeychainManager = authStateKeychainManager
+        self.applicationStateProvider = applicationStateProvider ?? DefaultApplicationStateProvider()
+        self.viewPresenterProvider = viewPresenterProvider ?? DefaultViewPresenterProvider()
     }
     
     // MARK: - Login Method
@@ -240,7 +256,7 @@ final class DefaultAuthUtil: AuthUtil {
             do {
                 // Discover OAuth configuration
                 let configuration = try await self.appAuthService.discoverConfiguration(forDiscoveryURL: discoveryUri)
-                
+
                 // Perform authorization flow
                 return try await self.performAuthorizationFlow(
                     configuration: configuration,
@@ -250,7 +266,7 @@ final class DefaultAuthUtil: AuthUtil {
                     ephemeralSession: ephemeralSession
                 )
             } catch {
-                throw (error is AuthError) ? error : AuthError.unexpectedError(description: "Login failed with unexpected error", underlyingError: error)
+                throw AuthError.from(error, description: "Login failed with unexpected error")
             }
         }
     }
@@ -294,7 +310,7 @@ final class DefaultAuthUtil: AuthUtil {
                 // Check if user cancelled the reauth flow
                 if case .userCancelledFlow = error {
                     // Clear all saved tokens for this user (don't log as auth failure)
-                    self.$logger.info("User cancelled reauth, clearing tokens for \(username)")
+                    self.$logger.debug("User cancelled reauth, clearing tokens for \(username)")
                     do {
                         try self.authStateKeychainManager.deleteAuthState(username: username)
                     } catch {
@@ -304,7 +320,7 @@ final class DefaultAuthUtil: AuthUtil {
                 }
                 throw error
             } catch {
-                throw AuthError.unexpectedError(description: "Re-authentication failed with unexpected error", underlyingError: error)
+                throw AuthError.from(error, description: "Re-authentication failed with unexpected error")
             }
         }
     }
@@ -348,13 +364,14 @@ final class DefaultAuthUtil: AuthUtil {
         // Wrap OIDAuthState with ephemeralSession flag
         let authState = AuthState(oidAuthState: oidAuthState, ephemeralSession: ephemeralSession)
 
-        do {
-            try authStateKeychainManager.saveAuthState(username: username, authState: authState)
-        } catch {
-            throw AuthError.failedToSaveAuthState(username: username, underlyingError: error)
+        if !skipTokenPersistence {
+            do {
+                try authStateKeychainManager.saveAuthState(username: username, authState: authState)
+            } catch {
+                throw AuthError.failedToSaveAuthState(username: username, underlyingError: error)
+            }
+            notify(user: username, oidAuthState: oidAuthState)
         }
-
-        notify(user: username, oidAuthState: oidAuthState)
 
         return try createAuthResponse(from: oidAuthState)
     }
@@ -370,22 +387,18 @@ final class DefaultAuthUtil: AuthUtil {
     }
     
     private func presentAuthorization(request: OIDAuthorizationRequest, ephemeralSession: Bool) async throws -> (authState: OIDAuthState?, session: (any OIDExternalUserAgentSession)?) {
-        let viewPresenter = await UIApplication.shared.rootViewController
+        let viewPresenter = try await viewPresenterProvider.viewPresenter()
         guard let externalUserAgent = OIDExternalUserAgentIOS(
             presenting: viewPresenter,
             prefersEphemeralSession: ephemeralSession
         ) else {
             throw AuthError.noExternalUserAgent
         }
-        
+
         do {
             return try await appAuthService.authState(byPresenting: request, session: externalUserAgent)
-        } catch let error as NSError {
-            if error.domain == OIDGeneralErrorDomain && error.code == OIDErrorCode.userCanceledAuthorizationFlow.rawValue {
-                throw AuthError.userCancelledFlow
-            } else {
-                throw error
-            }
+        } catch {
+            throw AuthError.from(error, description: "Authorization failed")
         }
     }
     
@@ -457,16 +470,16 @@ extension DefaultAuthUtil {
 
                 if isRecoverable {
                     // Network error - keep auth state, user can retry
-                    self.$logger.info("Token refresh failed (recoverable): \(error)")
+                    self.$logger.warn("Token refresh failed (recoverable): \(error)")
                     throw AuthError.tokenRefreshFailed(username: username, underlyingError: error, requiresReauthentication: false)
                 } else {
                     // Auth server rejected the refresh token
-                    self.$logger.info("Token refresh failed (requires re-auth): \(error)")
+                    self.$logger.warn("Token refresh failed (requires re-auth): \(error)")
 
                     // Check if app is in background - cannot show UI for reauth
                     let appState = await self.applicationStateProvider.applicationState
                     if appState == .background {
-                        self.$logger.info("App is in background, deferring reauth until foreground")
+                        self.$logger.warn("App is in background, deferring reauth until foreground")
                         throw AuthError.tokenRefreshFailed(username: username, underlyingError: error, requiresReauthentication: true)
                     }
 
@@ -497,7 +510,7 @@ extension DefaultAuthUtil {
             // Revoke token
             do {
                 try await self.appAuthService.revokeToken(authState: oidAuthState)
-                self.$logger.info("Token revoked successfully")
+                self.$logger.debug("Token revoked successfully")
             } catch {
                 self.$logger.error("Token revocation failed, continuing with logout: \(error)")
             }
@@ -511,16 +524,16 @@ extension DefaultAuthUtil {
             
             // Present end session if view controller available
             guard let presentingViewController else {
-                self.$logger.info("View controller not available, logged out silently")
+                self.$logger.error("View controller not available, logged out silently")
                 return
             }
-            
+
             do {
                 self.currentAuthorizationFlow = try await self.presentEndSession(userName: userName, oidAuthState: oidAuthState, presenting: presentingViewController)
-                self.$logger.info("Logged out successfully")
+                self.$logger.debug("Logged out successfully")
             } catch {
                 self.$logger.error("End session presentation failed: \(error)")
-                throw error
+                throw AuthError.from(error, description: "Logout failed")
             }
         }
     }
@@ -537,7 +550,6 @@ extension DefaultAuthUtil {
             configuration: serviceConfiguration,
             idTokenHint: idToken,
             postLogoutRedirectURL: postLogoutRedirectURL,
-            state: userName,
             additionalParameters: nil
         )
         
@@ -556,16 +568,70 @@ extension DefaultAuthUtil {
             throw AuthError.unexpectedError(description: "Failed to extract username from access token", underlyingError: nil)
         }
 
-        if actualUsername != expected {
+        if actualUsername.trimmedLowercase != expected {
+            let mismatchError = AuthError.usernameMismatch(expected: expected, actual: actualUsername)
+            await Logger.shared.authFailure(
+                username: expected,
+                flowType: .login,
+                error: mismatchError,
+                additionalContext: [.stage: "username_validation"]
+            )
+
             do {
                 try authStateKeychainManager.deleteAuthState(username: expected)
             } catch {
                 $logger.error("Failed to delete auth state after username mismatch: \(error)")
             }
 
-            try? await appAuthService.revokeToken(authState: authState)
+            do {
+                try await appAuthService.revokeToken(authState: authState)
+            } catch {
+                await Logger.shared.authFailure(
+                    username: expected,
+                    flowType: .login,
+                    error: error,
+                    additionalContext: [.stage: Auth.LogoutStage.tokenRevocation]
+                )
+            }
 
-            throw AuthError.usernameMismatch(expected: expected, actual: actualUsername)
+            await presentEndSessionForMismatch(authState: authState, username: expected)
+
+            throw mismatchError
+        }
+    }
+
+    private func presentEndSessionForMismatch(authState: OIDAuthState, username: String) async {
+        guard let idToken = authState.lastTokenResponse?.idToken, !idToken.isEmpty,
+              let postLogoutRedirectURL = authState.lastAuthorizationResponse.request.redirectURL else {
+            $logger.warn("Cannot present end session during username mismatch: missing ID token or redirect URL")
+            return
+        }
+
+        guard let presenting = try? await viewPresenterProvider.viewPresenter() else {
+            $logger.warn("Cannot present end session during username mismatch: no valid window")
+            return
+        }
+        let serviceConfiguration = authState.lastAuthorizationResponse.request.configuration
+        let endSessionRequest = OIDEndSessionRequest(
+            configuration: serviceConfiguration,
+            idTokenHint: idToken,
+            postLogoutRedirectURL: postLogoutRedirectURL,
+            additionalParameters: nil
+        )
+
+        do {
+            _ = try await appAuthService.presentEndSession(request: endSessionRequest, presenting: presenting)
+            $logger.debug("End session completed successfully during username mismatch cleanup")
+        } catch AuthError.userCancelledFlow {
+            $logger.warn("User cancelled end session during username mismatch cleanup")
+        } catch {
+            $logger.warn("End session failed during username mismatch cleanup: \(error)")
+            await Logger.shared.authFailure(
+                username: username,
+                flowType: .login,
+                error: error,
+                additionalContext: [.stage: Auth.LogoutStage.endSession]
+            )
         }
     }
 

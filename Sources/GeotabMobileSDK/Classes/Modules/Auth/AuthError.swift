@@ -2,12 +2,8 @@ import Foundation
 import AppAuth
 
 enum AuthError: LocalizedError, JsonSerializableError, Equatable {
-    case sessionParseFailedError
-    case sessionRetrieveFailedError
     case unexpectedError(description: String, underlyingError: (any Error)?)
     case noDataFoundError
-    case invalidURL
-    case invalidRedirectScheme(String)
     case failedToSaveAuthState(username: String, underlyingError: any Error)
     case usernameMismatch(expected: String, actual: String)
     case noAccessTokenFoundError(String)
@@ -19,21 +15,19 @@ enum AuthError: LocalizedError, JsonSerializableError, Equatable {
     case unexpectedResponse(Int)
     case networkError(any Error)
     case userCancelledFlow
+    case moduleFunctionArgumentError(String)
+
+    // OID error domain cases (from AppAuth-iOS)
+    case oidGeneralError(code: Int, underlyingError: any Error)
+    case oauthAuthorizationError(code: Int, description: String)
+    case oauthTokenError(code: Int, description: String)
 
     static func == (lhs: AuthError, rhs: AuthError) -> Bool {
         switch (lhs, rhs) {
-        case (.sessionParseFailedError, .sessionParseFailedError):
-            return true
-        case (.sessionRetrieveFailedError, .sessionRetrieveFailedError):
-            return true
         case (.unexpectedError(let lhsDesc, _), .unexpectedError(let rhsDesc, _)):
             return lhsDesc == rhsDesc
         case (.noDataFoundError, .noDataFoundError):
             return true
-        case (.invalidURL, .invalidURL):
-            return true
-        case (.invalidRedirectScheme(let lhsScheme), .invalidRedirectScheme(let rhsScheme)):
-            return lhsScheme == rhsScheme
         case (.failedToSaveAuthState(let lhsUsername, _), .failedToSaveAuthState(let rhsUsername, _)):
             return lhsUsername == rhsUsername
         case (.usernameMismatch(let lhsExpected, let lhsActual), .usernameMismatch(let rhsExpected, let rhsActual)):
@@ -57,6 +51,14 @@ enum AuthError: LocalizedError, JsonSerializableError, Equatable {
             return true
         case (.userCancelledFlow, .userCancelledFlow):
             return true
+        case (.oidGeneralError(let lhsCode, _), .oidGeneralError(let rhsCode, _)):
+            return lhsCode == rhsCode
+        case (.oauthAuthorizationError(let lhsCode, _), .oauthAuthorizationError(let rhsCode, _)):
+            return lhsCode == rhsCode
+        case (.oauthTokenError(let lhsCode, _), .oauthTokenError(let rhsCode, _)):
+            return lhsCode == rhsCode
+        case (.moduleFunctionArgumentError(let lhsStr), .moduleFunctionArgumentError(let rhsStr)):
+            return lhsStr == rhsStr
         default:
             return false
         }
@@ -72,10 +74,6 @@ enum AuthError: LocalizedError, JsonSerializableError, Equatable {
 
     var fallbackErrorMessage: String {
         switch self {
-        case .sessionParseFailedError:
-            return "Failed parsing session."
-        case .sessionRetrieveFailedError:
-            return "Failed retrieving session."
         case .unexpectedError(let description, let underlyingError):
             if let underlyingError {
                 return "An unexpected authentication error occurred: \(description). \(underlyingError.localizedDescription)"
@@ -84,10 +82,6 @@ enum AuthError: LocalizedError, JsonSerializableError, Equatable {
             }
         case .noDataFoundError:
             return "No data returned from authorization flow."
-        case .invalidURL:
-            return "Insecure Discovery URI. HTTPS is required."
-        case .invalidRedirectScheme(let schemeKey):
-            return "Login redirect scheme key \(schemeKey) not found in Info.plist."
         case .failedToSaveAuthState(let username, let underlyingError):
             return "Failed to save auth state for user \(username): \(underlyingError.localizedDescription)"
         case .usernameMismatch(let expected, let actual):
@@ -114,23 +108,59 @@ enum AuthError: LocalizedError, JsonSerializableError, Equatable {
             return "Unexpected response code: \(code)"
         case .userCancelledFlow:
             return "Authentication flow was cancelled"
+        case .oidGeneralError(let code, let underlyingError):
+            let codeName = oidGeneralErrorName(code: code)
+            return "AppAuth general error (\(codeName)): \(underlyingError.localizedDescription)"
+        case .oauthAuthorizationError(let code, let description):
+            return "OAuth authorization error (code \(code)): \(description)"
+        case .oauthTokenError(let code, let description):
+            return "OAuth token error (code \(code)): \(description)"
+        case .moduleFunctionArgumentError(let error):
+            return "ModuleFunctionArgumentError: \(error)"
+        }
+    }
+    // Helper to get human-readable OID error names
+    private func oidGeneralErrorName(code: Int) -> String {
+        switch code {
+        case OIDErrorCode.invalidDiscoveryDocument.rawValue:
+            return "invalid_discovery_document"
+        case OIDErrorCode.userCanceledAuthorizationFlow.rawValue:
+            return "user_canceled"
+        case OIDErrorCode.programCanceledAuthorizationFlow.rawValue:
+            return "program_canceled"
+        case OIDErrorCode.networkError.rawValue:
+            return "network_error"
+        case OIDErrorCode.serverError.rawValue:
+            return "server_error"
+        case OIDErrorCode.jsonDeserializationError.rawValue:
+            return "json_deserialization_error"
+        case OIDErrorCode.tokenResponseConstructionError.rawValue:
+            return "token_response_construction_error"
+        case OIDErrorCode.safariOpenError.rawValue:
+            return "safari_open_error"
+        case OIDErrorCode.browserOpenError.rawValue:
+            return "browser_open_error"
+        case OIDErrorCode.tokenRefreshError.rawValue:
+            return "token_refresh_error"
+        case OIDErrorCode.registrationResponseConstructionError.rawValue:
+            return "registration_response_construction_error"
+        case OIDErrorCode.jsonSerializationError.rawValue:
+            return "json_serialization_error"
+        case OIDErrorCode.idTokenParsingError.rawValue:
+            return "id_token_parsing_error"
+        case OIDErrorCode.idTokenFailedValidationError.rawValue:
+            return "id_token_validation_error"
+        default:
+            return "unknown_\(code)"
         }
     }
 
     var errorCode: String {
         switch self {
-        case .sessionParseFailedError:
-            return "SESSION_PARSE_FAILED"
-        case .sessionRetrieveFailedError:
-            return "SESSION_RETRIEVE_FAILED"
         case .unexpectedError:
             return "UNEXPECTED_ERROR"
         case .noDataFoundError:
             return "NO_DATA_FOUND"
-        case .invalidURL:
-            return "INVALID_URL"
-        case .invalidRedirectScheme:
-            return "INVALID_REDIRECT_SCHEME"
         case .failedToSaveAuthState:
             return "FAILED_TO_SAVE_AUTH_STATE"
         case .usernameMismatch:
@@ -153,6 +183,14 @@ enum AuthError: LocalizedError, JsonSerializableError, Equatable {
             return "NETWORK_ERROR"
         case .userCancelledFlow:
             return "USER_CANCELLED"
+        case .oidGeneralError:
+            return "OID_GENERAL_ERROR"
+        case .oauthAuthorizationError:
+            return "OAUTH_AUTHORIZATION_ERROR"
+        case .oauthTokenError:
+            return "OAUTH_TOKEN_ERROR"
+        case .moduleFunctionArgumentError:
+            return "MODULE_FUNCTION_ARGUMENT_ERROR"
         }
     }
 
@@ -171,6 +209,17 @@ enum AuthError: LocalizedError, JsonSerializableError, Equatable {
             return statusCode >= 500 && statusCode < 600
         case .userCancelledFlow:
             return true
+        case .oidGeneralError(let code, _):
+            // Network and server errors are recoverable, config/programming errors are not
+            switch code {
+            case OIDErrorCode.networkError.rawValue,
+                 OIDErrorCode.serverError.rawValue:
+                return true
+            default:
+                return false
+            }
+        case .oauthAuthorizationError, .oauthTokenError:
+            return false  // OAuth protocol errors are not recoverable
         default:
             return false
         }
@@ -205,80 +254,208 @@ enum AuthError: LocalizedError, JsonSerializableError, Equatable {
 
         if nsError.domain == OIDGeneralErrorDomain {
             switch nsError.code {
-            case OIDErrorCodeOAuth.invalidRequest.rawValue,
-                 OIDErrorCodeOAuth.invalidClient.rawValue,
-                 OIDErrorCodeOAuth.invalidGrant.rawValue,
-                 OIDErrorCodeOAuth.unauthorizedClient.rawValue,
-                 OIDErrorCodeOAuth.unsupportedGrantType.rawValue:
-                return false
-            default:
+            case OIDErrorCode.networkError.rawValue,
+                 OIDErrorCode.serverError.rawValue:
                 return true
+            default:
+                return false
             }
         }
 
         return false
     }
 
-    static func isExpectedError(_ error: any Error) -> Bool {
+    /// Determines if an error should be captured in Sentry for investigation.
+    /// Returns `true` for unexpected errors that indicate bugs, configuration issues, or system failures.
+    static func shouldBeCaptured(_ error: any Error) -> Bool {
         if let authError = error as? AuthError {
-            switch authError {
-            case .userCancelledFlow:
-                return true
-            case .networkError(let underlyingError):
-                return isExpectedError(underlyingError)
-            case .tokenRefreshFailed(_, let underlyingError, _):
-                return isExpectedError(underlyingError)
-            case .unexpectedError(_, let underlyingError):
-                if let underlyingError {
-                    return isExpectedError(underlyingError)
-                }
-                return false
-            case .unexpectedResponse(let statusCode):
-                return statusCode >= 500 && statusCode < 600
-            default:
-                return false
+            return shouldCaptureAuthError(authError)
+        }
+        return shouldCaptureNSError(error as NSError)
+    }
+
+    private static func shouldCaptureAuthError(_ error: AuthError) -> Bool {
+        switch error {
+        // User actions - don't capture
+        case .userCancelledFlow:
+            return false
+
+        // Network errors - don't capture (expected operational issues)
+        case .networkError:
+            return false
+
+        // HTTP errors - 5xx are expected, 4xx might indicate config issues
+        case .unexpectedResponse(let statusCode):
+            return statusCode >= 400 && statusCode < 500
+
+        // No access token - expected when user not logged in
+        case .noAccessTokenFoundError:
+            return false
+
+        // Wrapped errors - check underlying
+        case .tokenRefreshFailed(_, let underlyingError, _):
+            return shouldBeCaptured(underlyingError)
+
+        case .unexpectedError(_, let underlyingError):
+            if let underlyingError {
+                return shouldBeCaptured(underlyingError)
             }
+            return true
+
+        // OID error cases
+        case .oidGeneralError(let code, _):
+            return shouldCaptureOIDGeneralError(code: code)
+
+        case .oauthAuthorizationError(let code, _):
+            return shouldCaptureOAuthAuthorizationError(code: code)
+
+        case .oauthTokenError(let code, _):
+            return shouldCaptureOAuthTokenError(code: code)
+            
+        // Missing Values - don't capture
+        case .moduleFunctionArgumentError:
+            return false
+
+        // All other errors are unexpected and should be captured
+        default:
+            return true
+        }
+    }
+
+    private static func shouldCaptureNSError(_ nsError: NSError) -> Bool {
+        // URLError domain (network errors are expected)
+        if nsError.domain == NSURLErrorDomain {
+            return false
+        }
+
+        // OIDGeneralErrorDomain
+        if nsError.domain == OIDGeneralErrorDomain {
+            return shouldCaptureOIDGeneralError(code: nsError.code)
+        }
+
+        // OIDOAuthAuthorizationErrorDomain
+        if nsError.domain == OIDOAuthAuthorizationErrorDomain {
+            return shouldCaptureOAuthAuthorizationError(code: nsError.code)
+        }
+
+        // OIDOAuthTokenErrorDomain
+        if nsError.domain == OIDOAuthTokenErrorDomain {
+            return shouldCaptureOAuthTokenError(code: nsError.code)
+        }
+
+        // OIDHTTPErrorDomain
+        if nsError.domain == OIDHTTPErrorDomain {
+            return nsError.code >= 400 && nsError.code < 500
+        }
+
+        // Unknown errors should be captured
+        return true
+    }
+
+    private static func shouldCaptureOIDGeneralError(code: Int) -> Bool {
+        switch code {
+        case OIDErrorCode.userCanceledAuthorizationFlow.rawValue,
+             OIDErrorCode.programCanceledAuthorizationFlow.rawValue,
+             OIDErrorCode.networkError.rawValue,
+             OIDErrorCode.serverError.rawValue:
+            return false  // Expected operational errors
+        default:
+            return true  // Configuration/programming errors
+        }
+    }
+
+    private static func shouldCaptureOAuthAuthorizationError(code: Int) -> Bool {
+        switch code {
+        case OIDErrorCodeOAuthAuthorization.accessDenied.rawValue,
+             OIDErrorCodeOAuthAuthorization.serverError.rawValue,
+             OIDErrorCodeOAuthAuthorization.temporarilyUnavailable.rawValue:
+            return false  // User action or transient issues
+        default:
+            return true  // Configuration errors
+        }
+    }
+
+    private static func shouldCaptureOAuthTokenError(code: Int) -> Bool {
+        code != OIDErrorCodeOAuthToken.invalidGrant.rawValue
+    }
+}
+
+extension AuthError {
+    /// Converts an AppAuth or system error to a specific AuthError type
+    /// - Parameters:
+    ///   - error: The error to convert
+    ///   - description: Optional description for unexpected errors. Defaults to "Unhandled error"
+    /// - Returns: A specific AuthError case
+    static func from(_ error: any Error, description: String = "Unhandled error") -> AuthError {
+        // If already AuthError, return as-is
+        if let authError = error as? AuthError {
+            return authError
         }
 
         let nsError = error as NSError
 
-        if nsError.domain == OIDOAuthTokenErrorDomain {
-            return true
-        }
-
-        if nsError.domain == OIDOAuthAuthorizationErrorDomain {
-            return true
-        }
-
-        if nsError.domain == OIDGeneralErrorDomain {
-            switch nsError.code {
-            case OIDErrorCode.userCanceledAuthorizationFlow.rawValue:
-                return true
-            case OIDErrorCodeOAuth.invalidRequest.rawValue,
-                 OIDErrorCodeOAuth.invalidClient.rawValue,
-                 OIDErrorCodeOAuth.invalidGrant.rawValue,
-                 OIDErrorCodeOAuth.unauthorizedClient.rawValue,
-                 OIDErrorCodeOAuth.unsupportedGrantType.rawValue:
-                return true
-            default:
-                return false
-            }
-        }
-
+        // Check for URL errors (network issues)
         if let urlError = error as? URLError {
-            switch urlError.code {
-            case .notConnectedToInternet,
-                 .networkConnectionLost,
-                 .timedOut,
-                 .cannotConnectToHost,
-                 .cannotFindHost,
-                 .dnsLookupFailed:
-                return true
-            default:
-                return false
-            }
+            return .networkError(urlError)
         }
 
-        return false
+        // Check OIDGeneralErrorDomain
+        if nsError.domain == OIDGeneralErrorDomain {
+            // Special case: user cancellation
+            if nsError.code == OIDErrorCode.userCanceledAuthorizationFlow.rawValue {
+                return .userCancelledFlow
+            }
+            // All other OIDGeneralErrorDomain errors
+            return .oidGeneralError(code: nsError.code, underlyingError: error)
+        }
+
+        // Check OIDOAuthAuthorizationErrorDomain
+        if nsError.domain == OIDOAuthAuthorizationErrorDomain {
+            let errorDescription = nsError.localizedDescription
+            return .oauthAuthorizationError(code: nsError.code, description: errorDescription)
+        }
+
+        // Check OIDOAuthTokenErrorDomain
+        if nsError.domain == OIDOAuthTokenErrorDomain {
+            let errorDescription = nsError.localizedDescription
+            return .oauthTokenError(code: nsError.code, description: errorDescription)
+        }
+
+        // Check OIDHTTPErrorDomain
+        if nsError.domain == OIDHTTPErrorDomain {
+            return .unexpectedResponse(nsError.code)
+        }
+
+        // Fallback to generic unexpected error with provided description
+        return .unexpectedError(description: description, underlyingError: error)
     }
 }
+
+enum ModuleFunctionArgumentTypeError: Equatable, LocalizedError{
+      case invalidArgument
+      case userNameRequired
+      case clientIdRequired
+      case discoveryUriRequired
+      case invalidDiscoveryUri
+      case loginHintRequired
+      case invalidRedirectScheme(key: String)
+
+      var localizedDescription: String {
+          switch self {
+          case .userNameRequired:
+              return "Username is required"
+          case .clientIdRequired:
+              return "Client ID is required"
+          case .discoveryUriRequired:
+              return "Discovery URI is required"
+          case .invalidDiscoveryUri:
+              return "Insecure Discovery URI. HTTPS is required"
+          case .loginHintRequired:
+              return "LoginHint is required"
+          case .invalidRedirectScheme(let key):
+              return "Login redirect scheme key \(key) not found in Info.plist"
+          case .invalidArgument:
+              return "Invalid argument"
+          }
+      }
+  }
